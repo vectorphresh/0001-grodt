@@ -17,6 +17,7 @@ import (
 // an EVM node without changing the tool exposed to the model.
 type Wallet interface {
 	Balance(ctx context.Context) (Balance, error)
+	ChainState(ctx context.Context) (ChainState, error)
 }
 
 // Balance describes an authoritative wallet balance.
@@ -28,6 +29,11 @@ type Balance struct {
 	Asset   string `json:"asset"`
 	Amount  string `json:"amount"`
 	Wei     string `json:"wei"`
+}
+
+type ChainState struct {
+	ChainID     string `json:"chain_id"`
+	BlockNumber uint64 `json:"block_number"`
 }
 
 // MemoryWallet is a deterministic wallet implementation used while bringing up
@@ -88,4 +94,28 @@ func formatEther(wei *big.Int) string {
 	value.Quo(value, big.NewRat(1_000_000_000_000_000_000, 1))
 
 	return value.FloatString(18)
+}
+
+func (w *EVMWallet) ChainState(ctx context.Context) (ChainState, error) {
+	chainID, err := w.client.ChainID(ctx)
+	if err != nil {
+		return ChainState{}, fmt.Errorf("query chain ID: %w", err)
+	}
+
+	blockNumber, err := w.client.BlockNumber(ctx)
+	if err != nil {
+		return ChainState{}, fmt.Errorf("query block number: %w", err)
+	}
+
+	return ChainState{
+		ChainID:     chainID.String(),
+		BlockNumber: blockNumber,
+	}, nil
+}
+
+func (w *MemoryWallet) ChainState(context.Context) (ChainState, error) {
+	return ChainState{
+		ChainID:     "11155111",
+		BlockNumber: 12345678,
+	}, nil
 }
