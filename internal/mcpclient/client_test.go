@@ -314,7 +314,7 @@ func TestRecoverableFailureBecomesObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	decider := agent.NewFakeAgent([]agent.Decision{{ToolCall: &tools.ToolCall{Name: "test.read", Arguments: json.RawMessage(`{"n":1}`)}}, {Done: true}})
-	runner := runtime.NewRuntime(state.NewMemoryStore(), decider, registry, validation.NewValidators("test.read"))
+	runner := runtime.NewRuntime(agent.RunSpec{}, state.NewMemoryStore(), decider, registry, validation.NewValidators("test.read"))
 	if err := runner.Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -437,7 +437,7 @@ func TestDeniedToolNeverReachesMCPServer(t *testing.T) {
 	decider := agent.NewFakeAgent([]agent.Decision{
 		{ToolCall: &tools.ToolCall{Name: "test.text", Arguments: json.RawMessage(`{}`)}}, {Done: true},
 	})
-	runner := runtime.NewRuntime(state.NewMemoryStore(), decider, registry, validation.NewValidators("test.read"))
+	runner := runtime.NewRuntime(agent.RunSpec{}, state.NewMemoryStore(), decider, registry, validation.NewValidators("test.read"))
 	if err := runner.Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}

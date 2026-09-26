@@ -37,13 +37,13 @@ func fixture(t *testing.T, decisions ...agent.Decision) (*runtime.Runtime, *agen
 	}
 	store := state.NewMemoryStore()
 	if err := store.Save(ctx, &state.AgentState{
-		Goal: "inspect account", PendingIntents: []state.Intent{{ID: "pending", Action: "inspect"}},
+		PendingIntents: []state.Intent{{ID: "pending", Action: "inspect"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	decider := agent.NewFakeAgent(decisions)
 	validators := validation.NewValidators("fake.get_account")
-	runner := runtime.NewRuntime(store, decider, registry, validators, runtime.WithClock(func() time.Time { return instant }))
+	runner := runtime.NewRuntime(agent.RunSpec{Goal: "inspect account"}, store, decider, registry, validators, runtime.WithClock(func() time.Time { return instant }))
 	return runner, decider, provider, store, validators
 }
 
@@ -149,19 +149,18 @@ func TestRejectedActionsNeverReachProvider(t *testing.T) {
 }
 
 func TestPatchOnlyAndDonePersist(t *testing.T) {
-	goal := "new goal"
 	runner, decider, provider, store, _ := fixture(t,
-		agent.Decision{StatePatch: &state.StatePatch{Goal: &goal, AddMemory: []state.MemoryEntry{{Key: "useful", Value: "remember this"}}}},
+		agent.Decision{StatePatch: &state.StatePatch{AddMemory: []state.MemoryEntry{{Key: "useful", Value: "remember this"}}}},
 		agent.Decision{Done: true, StatePatch: &state.StatePatch{UpdateIntent: []state.IntentUpdate{{ID: "pending", Executed: true, ExecutedAt: instant}}}},
 	)
 	if err := runner.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
 	saved, _ := store.Load(ctx)
-	if saved.Goal != goal || len(saved.WorkingMemory) != 1 || !saved.PendingIntents[0].Executed || saved.Version != 2 {
+	if len(saved.WorkingMemory) != 1 || !saved.PendingIntents[0].Executed || saved.Version != 2 {
 		t.Fatalf("state: %+v", saved)
 	}
-	if decider.Inputs[1].State.Goal != goal || len(provider.Calls) != 0 {
+	if len(decider.Inputs[1].State.WorkingMemory) != 1 || len(provider.Calls) != 0 {
 		t.Fatal("patch-only behavior incorrect")
 	}
 }
@@ -211,7 +210,7 @@ func TestOnlyValidatedOutputReachesReducers(t *testing.T) {
 				t.Fatal(err)
 			}
 			reducer := &balanceReducer{}
-			runner := runtime.NewRuntime(store, decider, registry, validators, runtime.WithReducers(reducer), runtime.WithClock(func() time.Time { return instant }))
+			runner := runtime.NewRuntime(agent.RunSpec{}, store, decider, registry, validators, runtime.WithReducers(reducer), runtime.WithClock(func() time.Time { return instant }))
 			if err := runner.Run(ctx); err != nil {
 				t.Fatal(err)
 			}
@@ -288,7 +287,7 @@ func TestFatalFailuresAndCancellation(t *testing.T) {
 				cancel()
 				expected = context.Canceled
 			}
-			runner := runtime.NewRuntime(storage, decider, registry, validators)
+			runner := runtime.NewRuntime(agent.RunSpec{}, storage, decider, registry, validators)
 			if err := runner.Run(runCtx); !errors.Is(err, expected) {
 				t.Fatalf("got %v, want %v", err, expected)
 			}
@@ -305,7 +304,7 @@ func TestFatalFailuresAndCancellation(t *testing.T) {
 func TestMalformedLLMDecisionCanBeCorrected(t *testing.T) {
 	client := llm.NewFakeClient([]llm.CompletionResponse{{Content: `{"state_patch":{"world":{}},"done":true}`}, {Content: `{"done":true}`}})
 	store := state.NewMemoryStore()
-	runner := runtime.NewRuntime(store, agent.NewLLMAgent(client), tools.NewRegistry(), validation.NewValidators())
+	runner := runtime.NewRuntime(agent.RunSpec{}, store, agent.NewLLMAgent(client), tools.NewRegistry(), validation.NewValidators())
 	if err := runner.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +333,7 @@ func TestAgentCannotMutateRuntimeState(t *testing.T) {
 		input.State.World.Balances[0].Amount = "999"
 		return agent.Decision{Done: true}, nil
 	})
-	runner := runtime.NewRuntime(store, decider, tools.NewRegistry(), validation.NewValidators())
+	runner := runtime.NewRuntime(agent.RunSpec{}, store, decider, tools.NewRegistry(), validation.NewValidators())
 	if err := runner.Run(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -371,7 +370,7 @@ func TestCancellationAfterDecisionPreventsExecution(t *testing.T) {
 		cancel()
 		return toolDecision(`{"quantity":1}`), nil
 	})
-	runner := runtime.NewRuntime(store, decider, registry, validators)
+	runner := runtime.NewRuntime(agent.RunSpec{}, store, decider, registry, validators)
 	if err := runner.Run(runCtx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("error: %v", err)
 	}
@@ -395,7 +394,7 @@ func TestReducerFailureDoesNotPersistPartialState(t *testing.T) {
 		t.Fatal(err)
 	}
 	sentinel := errors.New("reduction failed")
-	runner := runtime.NewRuntime(store, decider, registry, validators, runtime.WithReducers(failingReducer{sentinel}))
+	runner := runtime.NewRuntime(agent.RunSpec{}, store, decider, registry, validators, runtime.WithReducers(failingReducer{sentinel}))
 	if err := runner.Run(ctx); !errors.Is(err, sentinel) {
 		t.Fatalf("error: %v", err)
 	}
@@ -414,7 +413,7 @@ func TestNilReducerFailsBeforeSideEffects(t *testing.T) {
 	if err := registry.Register(ctx, provider); err != nil {
 		t.Fatal(err)
 	}
-	runner := runtime.NewRuntime(store, decider, registry, validators, runtime.WithReducers(nil))
+	runner := runtime.NewRuntime(agent.RunSpec{}, store, decider, registry, validators, runtime.WithReducers(nil))
 	if err := runner.Run(ctx); err == nil {
 		t.Fatal("invalid configuration accepted")
 	}

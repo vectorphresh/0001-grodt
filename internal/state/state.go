@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// MemoryEntry represents an entry in working memory
+// MemoryEntry is a compact conclusion. Key is its stable identifier.
 type MemoryEntry struct {
 	Key        string    `json:"key"`
 	Value      string    `json:"value"`
@@ -25,7 +25,6 @@ type Intent struct {
 type AgentState struct {
 	Version        uint64        `json:"version"`
 	UpdatedAt      time.Time     `json:"updated_at"`
-	Goal           string        `json:"goal,omitempty"`
 	World          WorldState    `json:"world"`
 	WorkingMemory  []MemoryEntry `json:"working_memory,omitempty"`
 	PendingIntents []Intent      `json:"pending_intents,omitempty"`

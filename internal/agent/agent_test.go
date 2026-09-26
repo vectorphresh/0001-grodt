@@ -18,9 +18,9 @@ func TestFullContextIsRebuiltWithoutConversationHistory(t *testing.T) {
 	client := llm.NewFakeClient([]llm.CompletionResponse{{Content: `{"done":true}`}, {Content: `{"done":true}`}})
 	decider := agent.NewLLMAgent(client)
 	input := agent.StepInput{
-		Goal: "inspect account",
+		Spec: agent.RunSpec{Goal: "inspect account", Instructions: "Read only"},
 		State: state.AgentState{
-			Goal: "inspect account", World: state.WorldState{Balances: []state.Balance{{Asset: "USD", Amount: "100"}}},
+			World:          state.WorldState{Balances: []state.Balance{{Asset: "USD", Amount: "100"}}},
 			WorkingMemory:  []state.MemoryEntry{{Key: "strategy", Value: "wait for confirmation"}},
 			PendingIntents: []state.Intent{{ID: "read", Action: "inspect account"}},
 		},
@@ -53,6 +53,12 @@ func TestDecisionDecoding(t *testing.T) {
 	}{
 		{"done", `{"done":true}`, true},
 		{"intent with call", `{"intent":"inspect","tool_call":{"name":"fake.read","arguments":{}}}`, true},
+		{"upsert only", `{"state_patch":{"upsert_memory":[{"key":"k","value":"v"}]}}`, true},
+		{"remove intent only", `{"state_patch":{"remove_intent":["i"]}}`, true},
+		{"patch goal", `{"state_patch":{"goal":"new goal"},"done":true}`, false},
+		{"patch spec", `{"state_patch":{"spec":{"goal":"new goal"}},"done":true}`, false},
+		{"patch instructions", `{"state_patch":{"instructions":"new procedure"},"done":true}`, false},
+		{"decision spec", `{"spec":{"goal":"new goal"},"done":true}`, false},
 		{"patch only", `{"state_patch":{"add_memory":[{"key":"k","value":"v"}]}}`, true},
 		{"malformed", `{"done":`, false},
 		{"markdown", "```json\n{}\n```", false},

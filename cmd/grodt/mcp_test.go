@@ -92,6 +92,9 @@ func TestMCPAcceptanceThroughRealTransports(t *testing.T) {
 					t.Error(err)
 					return
 				}
+				if input.Spec.Goal != "Inspect the status once" || !strings.Contains(input.Spec.Instructions, "Use only local.inspect exactly once") {
+					t.Error("run specification missing or changed")
+				}
 				if len(input.Tools) != 1 || input.Tools[0].Name != "local.inspect" || input.Tools[0].Description != "A dynamically discovered read-only tool" {
 					t.Error("discovered tool metadata missing")
 				}

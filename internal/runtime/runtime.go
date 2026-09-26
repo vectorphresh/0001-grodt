@@ -32,6 +32,7 @@ func WithReducers(reducers ...Reducer) Option {
 // inserted into working memory. A Store should have only one active Runtime writer.
 type Runtime struct {
 	mu                 sync.Mutex
+	spec               agent.RunSpec
 	stateStore         state.Store
 	agent              agent.Agent
 	toolRegistry       tools.Registry
@@ -42,8 +43,8 @@ type Runtime struct {
 	stepID             uint64
 }
 
-func NewRuntime(store state.Store, decider agent.Agent, registry tools.Registry, validators *validation.Validators, options ...Option) *Runtime {
-	r := &Runtime{stateStore: store, agent: decider, toolRegistry: registry, validators: validators, now: time.Now}
+func NewRuntime(spec agent.RunSpec, store state.Store, decider agent.Agent, registry tools.Registry, validators *validation.Validators, options ...Option) *Runtime {
+	r := &Runtime{spec: spec, stateStore: store, agent: decider, toolRegistry: registry, validators: validators, now: time.Now}
 	for _, option := range options {
 		option(r)
 	}
@@ -92,6 +93,9 @@ func (r *Runtime) Step(ctx context.Context) (StepResult, error) {
 	if current == nil {
 		return StepResult{}, fmt.Errorf("store returned nil state")
 	}
+	if err := state.ValidateWorkingMemory(current.WorkingMemory); err != nil {
+		return StepResult{}, fmt.Errorf("loaded working memory: %w", err)
+	}
 	definitions, err := r.toolRegistry.List(ctx)
 	if err != nil {
 		return StepResult{}, fmt.Errorf("list tools: %w", err)
@@ -108,6 +112,9 @@ func (r *Runtime) Step(ctx context.Context) (StepResult, error) {
 	finish := func(next state.AgentState, decision agent.Decision, obs *observation.Observation) (StepResult, error) {
 		if err := ctx.Err(); err != nil {
 			return StepResult{}, err
+		}
+		if err := state.ValidateWorkingMemory(next.WorkingMemory); err != nil {
+			return StepResult{}, fmt.Errorf("save working memory: %w", err)
 		}
 		next.Version = current.Version + 1
 		next.UpdatedAt = r.now().UTC()
@@ -135,7 +142,7 @@ func (r *Runtime) Step(ctx context.Context) (StepResult, error) {
 		return result, err
 	}
 	decision, err := r.agent.Decide(ctx, agent.StepInput{
-		Goal: current.Goal, State: current.Clone(), Observation: cloneObservation(r.currentObservation), Tools: definitions,
+		Spec: r.spec, State: current.Clone(), Observation: cloneObservation(r.currentObservation), Tools: definitions,
 	})
 	if err != nil {
 		var invalid *agent.InvalidDecisionError

@@ -31,6 +31,9 @@ func (s *MemoryStore) Save(ctx context.Context, value *AgentState) error {
 	if value == nil {
 		return fmt.Errorf("cannot save nil state")
 	}
+	if err := ValidateWorkingMemory(value.WorkingMemory); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.state = value.Clone()

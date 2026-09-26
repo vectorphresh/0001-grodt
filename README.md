@@ -4,7 +4,7 @@ Grodt is an execution runtime between an agent and external tool providers.
 The agent proposes; the runtime validates; providers execute; observations feed
 back into the next decision. Execution state carries the run forward.
 
-## Current checkpoint: read-only MCP integration
+## Current checkpoint: 4A — state hygiene
 
 ```sh
 go run ./cmd/grodt
@@ -155,7 +155,7 @@ cmd/grodt -> mcpclient -> tools, official MCP SDK
   `Registry`, `ProviderRegistry`, JSON Schema validation, and `FakeProvider`.
 - `internal/llm`: provider-neutral `Client`, completion types, `FakeClient`,
   `OpenAIClient`, `OpenAIConfig`, environment overrides, and safe `TransportError`s.
-- `internal/agent`: `Agent`, `LLMAgent`, `FakeAgent`, `StepInput`, `Decision`, and
+- `internal/agent`: `RunSpec`, `Agent`, `LLMAgent`, `FakeAgent`, `StepInput`, `Decision`, and
   recoverable `InvalidDecisionError`. Agent semantics remain independent of the
   HTTP transport behind `llm.Client`.
 - `internal/validation`: decision, state-patch, permission, and composable action
@@ -177,17 +177,33 @@ allow them, for example `validation.NewValidators("fake.get_account")`.
 Additional action/risk policies run after schema and permission checks and
 before the provider. No trading-specific risk policy is implemented yet.
 
-Each step gives the agent an independent state snapshot and the previous
-observation. The LLM prompt includes full state, memory, intents, tool schemas,
-and observation errors as data, separate from agent instructions. JSON decoding
+Each runtime is constructed with an explicit `agent.RunSpec{Goal, Instructions}`.
+It owns a value copy for the entire run. Each step gives the agent that fixed
+specification, an independent state snapshot, and the latest observation.
+`AgentState` has no goal field: task definition and mutable progress are separate.
+The LLM prompt includes the specification, full state, memory, intents, tool
+schemas, and observation errors, with decision instructions in a system message. JSON decoding
 rejects unknown fields, trailing values, and invalid decision shapes. Descriptive
 `intent` may accompany a tool call; it is never interpreted as an executable action.
 
-Patches cannot express world state or runtime metadata. They are validated
+Patches cannot express the run specification, world state, or runtime metadata. They are validated
 against existing identifiers and applied atomically. Conflicting operations,
 duplicate identifiers, unknown removals/updates, and inconsistent intent status
-and timestamps are rejected. Memory replacement requires removing the old key
-in one step and adding the replacement in a subsequent step.
+and timestamps are rejected. `upsert_memory` replaces an entire entry at its stable
+`key`, including its timestamp, or creates it if absent. `remove_intent` explicitly
+retires an existing intent; no external action is executed or cancelled by removal.
+There is no automatic intent retirement or permanent intent history.
+
+Working memory is limited to **64 entries**, each at most **4,096 bytes** when
+encoded with Go's `encoding/json.Marshal` (key, value, timestamp, and JSON
+escaping included). A patch exceeding either limit is rejected in full. Removing
+one key can make room for another in the same patch, but operations on the same
+key/ID cannot be combined. No automatic eviction occurs. Loaded/saved memory is
+also validated outside the model. There is no expiration field or TTL policy.
+
+These are working-memory bounds, not a total prompt budget: world snapshots,
+intent counts/content, tool definitions, and observations have no new global cap.
+Callers and agents must maintain relevant intents explicitly.
 
 Successful tool output must be valid JSON and satisfy the output schema when
 provided. Only then can trusted reducers consume it. Observations never become
@@ -234,7 +250,12 @@ result normalization, recoverable and fatal errors, cancellation notifications,
 startup timeout, subprocess cleanup, and the complete HTTP-to-stdio acceptance
 flow. No external service is required for `go test ./...`.
 
-Checkpoint 3 is complete, including live Alpaca paper account reading. Next,
+Checkpoint 4A is complete: immutable run specification, atomic memory upserts,
+explicit intent retirement, deterministic memory bounds, and a 150-step synthetic
+state/prompt regression test. See [STATE_HYGIENE_CHECKPOINT.md](docs/STATE_HYGIENE_CHECKPOINT.md)
+for policies, compatibility changes, acceptance evidence, and verification.
+Checkpoint 3's live time and Alpaca results remain historical evidence; no live
+provider or model call is needed for state-hygiene verification. Next,
 separately specify trusted account reduction with field-level validation of the
 preserved security envelope. Trading, MCP server exposure, and durable storage
 remain outside this checkpoint.

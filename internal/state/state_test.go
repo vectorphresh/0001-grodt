@@ -11,7 +11,7 @@ import (
 
 func sampleState() state.AgentState {
 	return state.AgentState{
-		Version: 7, UpdatedAt: time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC), Goal: "inspect",
+		Version: 7, UpdatedAt: time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC),
 		World: state.WorldState{
 			Balances:     []state.Balance{{Asset: "USD", Amount: "100"}},
 			Positions:    []state.Position{{Symbol: "TEST", Quantity: "1"}},
@@ -23,7 +23,6 @@ func sampleState() state.AgentState {
 }
 
 func mutate(s *state.AgentState) {
-	s.Goal = "changed"
 	s.World.Balances[0].Amount = "999"
 	s.World.Positions[0].Quantity = "999"
 	s.World.ActiveOrders[0].Status = "changed"
@@ -76,9 +75,7 @@ func TestMemoryStoreCancellation(t *testing.T) {
 func TestTypedPatchPreservesRuntimeFields(t *testing.T) {
 	original := sampleState()
 	before := original.Clone()
-	goal := "next goal"
 	next, err := state.ApplyPatch(original, state.StatePatch{
-		Goal:      &goal,
 		AddMemory: []state.MemoryEntry{{Key: "new", Value: "new conclusion"}}, RemoveMemory: []string{"remember"},
 		AddIntent:    []state.Intent{{ID: "intent-2", Action: "next action"}},
 		UpdateIntent: []state.IntentUpdate{{ID: "intent-1", Executed: true, ExecutedAt: original.UpdatedAt}},
@@ -92,7 +89,7 @@ func TestTypedPatchPreservesRuntimeFields(t *testing.T) {
 	if !reflect.DeepEqual(next.World, original.World) || next.Version != original.Version || !next.UpdatedAt.Equal(original.UpdatedAt) {
 		t.Fatal("patch changed runtime-owned fields")
 	}
-	if next.Goal != goal || len(next.WorkingMemory) != 1 || next.WorkingMemory[0].Key != "new" || len(next.PendingIntents) != 2 || !next.PendingIntents[0].Executed {
+	if len(next.WorkingMemory) != 1 || next.WorkingMemory[0].Key != "new" || len(next.PendingIntents) != 2 || !next.PendingIntents[0].Executed {
 		t.Fatalf("patch result: %+v", next)
 	}
 }
@@ -114,8 +111,7 @@ func TestInvalidPatchesAreAtomic(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			original := sampleState()
 			before := original.Clone()
-			goal := "must not persist"
-			patch.Goal = &goal
+			patch.UpsertMemory = []state.MemoryEntry{{Key: "valid", Value: "must not persist"}}
 			returned, err := state.ApplyPatch(original, patch)
 			if err == nil {
 				t.Fatal("invalid patch accepted")

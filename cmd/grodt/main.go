@@ -18,11 +18,12 @@ import (
 	"github.com/vectorphresh/0001-grodt/internal/validation"
 )
 
+func fakeAccountSpec() agent.RunSpec {
+	return agent.RunSpec{Goal: "Inspect the fake account", Instructions: "Call fake.get_account exactly once with empty arguments. Once its observation confirms the account status, return done:true. Do not change state or call any additional tools."}
+}
+
 func fakeAccount(ctx context.Context) (*state.MemoryStore, *tools.FakeProvider, *tools.ProviderRegistry, error) {
 	store := state.NewMemoryStore()
-	if err := store.Save(ctx, &state.AgentState{Goal: "Inspect the fake account by calling fake.get_account exactly once with empty arguments. Once its observation confirms the account status, return done:true. Do not change state or call any additional tools."}); err != nil {
-		return nil, nil, nil, err
-	}
 	provider := tools.NewFakeProvider([]tools.ToolDefinition{{
 		Name: "get_account", Description: "Read a simulated account",
 		InputSchema:  json.RawMessage(`{"type":"object","additionalProperties":false}`),
@@ -44,7 +45,7 @@ func runFake(ctx context.Context, output io.Writer) error {
 		{Intent: "Inspect account", ToolCall: &tools.ToolCall{Name: "fake.get_account", Arguments: json.RawMessage(`{}`)}},
 		{Summary: "Fake account inspected", Done: true},
 	})
-	runner := runtime.NewRuntime(store, decider, registry, validation.NewValidators("fake.get_account"))
+	runner := runtime.NewRuntime(fakeAccountSpec(), store, decider, registry, validation.NewValidators("fake.get_account"))
 	if err := runner.Run(ctx); err != nil {
 		return err
 	}
@@ -91,7 +92,7 @@ func runLLM(ctx context.Context, config llm.OpenAIConfig, output io.Writer) erro
 		return err
 	}
 	recorded := &acceptanceClient{client: client}
-	runner := runtime.NewRuntime(store, agent.NewLLMAgent(recorded), registry, validation.NewValidators("fake.get_account"))
+	runner := runtime.NewRuntime(fakeAccountSpec(), store, agent.NewLLMAgent(recorded), registry, validation.NewValidators("fake.get_account"))
 	if err := runner.Run(ctx); err != nil {
 		return err
 	}

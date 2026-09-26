@@ -66,12 +66,10 @@ func runMCP(ctx context.Context, llmConfig llm.OpenAIConfig, config mcpclient.Co
 		return fmt.Errorf("configured read-only tool was not discovered")
 	}
 	store := state.NewMemoryStore()
-	if err := store.Save(ctx, &state.AgentState{Goal: fmt.Sprintf("%s Use only %s exactly once, with arguments matching its discovered schema. After receiving a successful observation, return done:true. Do not change state or invoke any other tool.", goal, name)}); err != nil {
-		return err
-	}
+	spec := agent.RunSpec{Goal: goal, Instructions: fmt.Sprintf("Use only %s exactly once, with arguments matching its discovered schema. After receiving a successful observation, return done:true. Do not change state or invoke any other tool.", name)}
 	boundary := &acceptanceRegistry{Registry: registry, allowed: name}
 	recorded := &acceptanceClient{client: client}
-	runner := runtime.NewRuntime(store, agent.NewLLMAgent(recorded), boundary, validation.NewValidators(name))
+	runner := runtime.NewRuntime(spec, store, agent.NewLLMAgent(recorded), boundary, validation.NewValidators(name))
 	if err := runner.Run(ctx); err != nil {
 		// Feedback categories are runtime-owned. Do not print remote error text,
 		// observation data, or model responses when acceptance fails.

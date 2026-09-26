@@ -44,6 +44,9 @@ func TestHTTPAcceptanceFlow(t *testing.T) {
 			t.Error(err)
 			return
 		}
+		if input.Spec != fakeAccountSpec() {
+			t.Errorf("run specification missing or changed: %+v", input.Spec)
+		}
 		switch number {
 		case 1:
 			if len(input.Tools) != 1 || input.Tools[0].Name != "fake.get_account" || input.Observation != nil {
