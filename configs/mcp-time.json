@@ -1,0 +1,6 @@
+{
+  "name": "time",
+  "command": "uvx",
+  "args": ["mcp-server-time==2026.8.18"],
+  "startup_timeout": "30s"
+}

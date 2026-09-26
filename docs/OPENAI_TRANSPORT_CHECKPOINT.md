@@ -2,6 +2,7 @@
 
 September 25, 2026. **Implementation, automated tests, and live acceptance passed.**
 This supersedes the real-LLM limitations in the earlier `CHATGPT_HANDOFF.md`.
+The subsequent read-only MCP integration is now complete; see [MCP_CHECKPOINT.md](MCP_CHECKPOINT.md).
 
 ## Scope and implementation
 

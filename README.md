@@ -4,7 +4,7 @@ Grodt is an execution runtime between an agent and external tool providers.
 The agent proposes; the runtime validates; providers execute; observations feed
 back into the next decision. Execution state carries the run forward.
 
-## Current checkpoint: OpenAI-compatible transport
+## Current checkpoint: read-only MCP integration
 
 ```sh
 go run ./cmd/grodt
@@ -67,7 +67,71 @@ JSON decision decoding and runtime validation are still enforced.
 
 The live acceptance run passed against the configured local endpoint. See
 [the transport checkpoint report](docs/OPENAI_TRANSPORT_CHECKPOINT.md) for evidence.
-MCP integration and trading remain deferred.
+The subsequent read-only MCP checkpoint also passed. Trading remains deferred.
+
+## Read-only MCP acceptance
+
+The MCP adapter uses the official Go SDK over **stdio only**. The supplied
+configuration starts the published MCP time reference server using `uvx`:
+
+```sh
+go run ./cmd/grodt -mode mcp \
+  -mcp-config configs/mcp-time.json \
+  -mcp-tool get_current_time \
+  -goal 'Read the current time in America/Los_Angeles.' \
+  -model your-served-model
+```
+
+Use the same LLM environment configuration described above. Install `uv` first
+if needed. The server package is pinned in `configs/mcp-time.json`; a first run
+may download its Python dependencies. Go tests use local subprocess fixtures
+and never require that package, Alpaca credentials, or a live model.
+
+The command discovers all remote tools, registers their public names, and
+explicitly permits only `time.get_current_time`. It checks ten acceptance criteria
+and prints success only after closing the session. A premature `Done` fails.
+Repeated tool execution is blocked by the acceptance command. Neither tool
+results nor model response text are printed.
+
+MCP configuration fields: `name`, `command`, optional `args`, `dir`,
+`inherit_env` (environment variable names), `env` (explicit overrides), and
+`startup_timeout` (positive duration, default `30s`). Commands run directly without
+a shell. Use a reviewed read-only server/tool; the permission allowlist is explicit
+and does not trust a server's read-only annotations as authorization.
+
+Only basic process environment values (PATH, HOME, temporary-directory and locale
+settings) are inherited by default. For a credentialed server, explicitly list
+its required variable names under `inherit_env`; do not place secrets in command
+arguments. Subprocess stderr and SDK logging are discarded. Raw sensitive tool
+results and remote error text are not logged.
+
+The current subprocess supervisor requires Unix. It isolates a process group,
+closes the SDK session and stdin, waits for the child, and terminates remaining
+group members. Lifetime context cancellation also closes the session; repeated
+Close calls are safe. No additional MCP transport, retries, production reducers,
+or persistence were introduced.
+
+Alpaca paper account acceptance also passed. With `ALPACA_API_KEY` and
+`ALPACA_SECRET_KEY` set locally (never committed), run:
+
+```sh
+uv sync --frozen --no-dev --project alpaca-mcp-server
+go run ./cmd/grodt -mode mcp \
+  -mcp-config configs/mcp-alpaca-paper.json \
+  -mcp-tool get_account_info \
+  -goal 'Read the Alpaca paper account status once. Do not modify the account, create orders, or call any other tool.' \
+  -model your-served-model
+```
+
+This configuration forces paper mode and selects the server's account toolset.
+It discovers 11 tools, including documentation and account-update capabilities,
+but permits **only `alpaca.get_account_info`**. The account observation is sent
+to the configured LLM; neither account data nor credentials are printed.
+The server's security envelope and advertised schemas are preserved. The
+successful Alpaca run executed the selected tool once and passed all ten checks.
+
+See [MCP_CHECKPOINT.md](docs/MCP_CHECKPOINT.md) for the ten live PASS results,
+schema mapping, normalization, error classification, and remaining limits.
 
 ## Components and dependency direction
 
@@ -77,6 +141,7 @@ cmd/grodt -> runtime -> agent -> llm
                     -> tools
                     -> observation
                     -> validation -> agent, state, tools
+cmd/grodt -> mcpclient -> tools, official MCP SDK
 ```
 
 - `internal/state`: `AgentState`, `WorldState`, `MemoryEntry`, `Intent`,
@@ -84,6 +149,8 @@ cmd/grodt -> runtime -> agent -> llm
   `Store`, and `MemoryStore`. No transport dependencies. The duplicate
   `internal/types` package has been consolidated here.
 - `internal/observation`: transient `Observation` and `ErrorInfo`.
+- `internal/mcpclient`: stdio `Provider`, dynamic discovery, generic result
+  normalization, configuration, sanitized errors, and session/process cleanup.
 - `internal/tools`: `ToolDefinition`, `ToolCall`, `ToolResult`, `Provider`,
   `Registry`, `ProviderRegistry`, JSON Schema validation, and `FakeProvider`.
 - `internal/llm`: provider-neutral `Client`, completion types, `FakeClient`,
@@ -161,6 +228,13 @@ response size boundaries, cancellation before headers and during body reads,
 timeouts, and configuration precedence. Command tests verify all seven acceptance
 criteria through a local HTTP server and reject premature completion.
 
-Next checkpoint: implement `mcpclient.Provider`, discover tools dynamically from
-one read-only external MCP server, and preserve the existing runtime validation
-and provider-neutral interfaces. Do not add trading or MCP server exposure.
+MCP tests additionally exercise discovery pagination, namespacing and remote-name
+routing, schema preservation/absence, collisions, unchanged argument values,
+result normalization, recoverable and fatal errors, cancellation notifications,
+startup timeout, subprocess cleanup, and the complete HTTP-to-stdio acceptance
+flow. No external service is required for `go test ./...`.
+
+Checkpoint 3 is complete, including live Alpaca paper account reading. Next,
+separately specify trusted account reduction with field-level validation of the
+preserved security envelope. Trading, MCP server exposure, and durable storage
+remain outside this checkpoint.

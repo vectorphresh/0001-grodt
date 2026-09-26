@@ -11,6 +11,7 @@ import (
 
 	"github.com/vectorphresh/0001-grodt/internal/agent"
 	"github.com/vectorphresh/0001-grodt/internal/llm"
+	"github.com/vectorphresh/0001-grodt/internal/mcpclient"
 	"github.com/vectorphresh/0001-grodt/internal/runtime"
 	"github.com/vectorphresh/0001-grodt/internal/state"
 	"github.com/vectorphresh/0001-grodt/internal/tools"
@@ -129,10 +130,13 @@ func runLLM(ctx context.Context, config llm.OpenAIConfig, output io.Writer) erro
 func run(ctx context.Context, args []string, output, diagnostics io.Writer) error {
 	flags := flag.NewFlagSet("grodt", flag.ContinueOnError)
 	flags.SetOutput(diagnostics)
-	mode := flags.String("mode", "fake", "fake demo or llm acceptance run")
+	mode := flags.String("mode", "fake", "fake demo, llm acceptance, or mcp acceptance")
 	baseURL := flags.String("base-url", "", "OpenAI-compatible API root (overrides environment)")
 	model := flags.String("model", "", "model name (overrides environment)")
 	timeout := flags.Duration("request-timeout", 0, "per-request timeout, e.g. 2m (overrides environment)")
+	mcpPath := flags.String("mcp-config", "", "JSON stdio server configuration for MCP acceptance")
+	remoteTool := flags.String("mcp-tool", "", "one reviewed read-only remote tool name to permit")
+	goal := flags.String("goal", "", "read-only MCP acceptance task")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -142,7 +146,7 @@ func run(ctx context.Context, args []string, output, diagnostics io.Writer) erro
 	switch *mode {
 	case "fake":
 		return runFake(ctx, output)
-	case "llm":
+	case "llm", "mcp":
 		config, err := llm.OpenAIConfigFromEnv(llm.DefaultOpenAIConfig())
 		if err != nil {
 			return err
@@ -157,9 +161,16 @@ func run(ctx context.Context, args []string, output, diagnostics io.Writer) erro
 				config.RequestTimeout = *timeout
 			}
 		})
+		if *mode == "mcp" {
+			server, err := mcpclient.LoadConfig(*mcpPath)
+			if err != nil {
+				return err
+			}
+			return runMCP(ctx, config, server, *remoteTool, *goal, output)
+		}
 		return runLLM(ctx, config, output)
 	default:
-		return fmt.Errorf("mode must be fake or llm")
+		return fmt.Errorf("mode must be fake, llm, or mcp")
 	}
 }
 

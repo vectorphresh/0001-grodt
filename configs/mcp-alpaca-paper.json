@@ -1,0 +1,11 @@
+{
+  "name": "alpaca",
+  "command": "uv",
+  "args": ["run", "--frozen", "--no-dev", "--project", "alpaca-mcp-server", "alpaca-mcp-server", "--transport", "stdio"],
+  "inherit_env": ["ALPACA_API_KEY", "ALPACA_SECRET_KEY"],
+  "env": {
+    "ALPACA_PAPER_TRADE": "true",
+    "ALPACA_TOOLSETS": "account"
+  },
+  "startup_timeout": "60s"
+}
