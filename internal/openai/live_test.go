@@ -31,8 +31,8 @@ func TestLiveLlamaCPP(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Logf("Response: %q", text)
-		if strings.TrimSpace(text) != "GRODT_OK" {
+		t.Logf("Response: %q", text.Text)
+		if strings.TrimSpace(text.Text) != "GRODT_OK" {
 			t.Fatal("unexpected vanilla response")
 		}
 	})
@@ -44,7 +44,7 @@ func TestLiveLlamaCPP(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		assertLiveJSON(t, result, `{"cash":12345}`)
+		assertLiveJSON(t, result.JSON, `{"cash":12345}`)
 	})
 	spec := llm.JSONSpecification{Name: "state_mutation", Strict: true, Schema: json.RawMessage(`{"type":"object","properties":{"upsert_memory":{"type":"array","items":{"type":"object","properties":{"key":{"type":"string"},"value":{"type":"string"}},"required":["key","value"],"additionalProperties":false}}},"required":["upsert_memory"],"additionalProperties":false}`)}
 	state := json.RawMessage(`{"working_memory":[{"key":"market","value":"closed"}]}`)
@@ -61,7 +61,7 @@ func TestLiveLlamaCPP(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			assertLiveJSON(t, result, `{"upsert_memory":[{"key":"market","value":"open"}]}`)
+			assertLiveJSON(t, result.JSON, `{"upsert_memory":[{"key":"market","value":"open"}]}`)
 			if string(state) != original {
 				t.Fatal("caller state was modified")
 			}

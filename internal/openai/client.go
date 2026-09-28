@@ -64,80 +64,84 @@ func NewClient(config Config) (Client, error) {
 	return &client{service: service, timeout: config.Timeout}, nil
 }
 
-func (c *client) Prompt(ctx context.Context, prompt string) (string, error) {
+func (c *client) Prompt(ctx context.Context, prompt string) (TextResult, error) {
 	if strings.TrimSpace(prompt) == "" {
-		return "", errors.New("openai: prompt must not be blank")
+		return TextResult{}, errors.New("openai: prompt must not be blank")
 	}
 	return c.complete(ctx, sdk.ChatCompletionNewParams{Messages: []sdk.ChatCompletionMessageParamUnion{sdk.UserMessage(prompt)}})
 }
 
-func (c *client) PromptWithSpecification(ctx context.Context, instructions, prompt string, input json.RawMessage, specification JSONSpecification) (json.RawMessage, error) {
+func (c *client) PromptWithSpecification(ctx context.Context, instructions, prompt string, input json.RawMessage, specification JSONSpecification) (JSONResult, error) {
 	if strings.TrimSpace(prompt) == "" {
-		return nil, errors.New("openai: prompt must not be blank")
+		return JSONResult{}, errors.New("openai: prompt must not be blank")
 	}
 	if !json.Valid(input) {
-		return nil, errors.New("openai: context must contain valid JSON")
+		return JSONResult{}, errors.New("openai: context must contain valid JSON")
 	}
 	payload, err := json.Marshal(struct {
 		Prompt  string          `json:"prompt"`
 		Context json.RawMessage `json:"context"`
 	}{prompt, input})
 	if err != nil {
-		return nil, errors.New("openai: cannot encode context")
+		return JSONResult{}, errors.New("openai: cannot encode context")
 	}
 	return c.structured(ctx, instructions, payload, specification)
 }
 
-func (c *client) RequestMutation(ctx context.Context, instructions string, state, observation json.RawMessage, specification JSONSpecification) (json.RawMessage, error) {
+func (c *client) RequestMutation(ctx context.Context, instructions string, state, observation json.RawMessage, specification JSONSpecification) (JSONResult, error) {
 	if !json.Valid(state) {
-		return nil, errors.New("openai: state must contain valid JSON")
+		return JSONResult{}, errors.New("openai: state must contain valid JSON")
 	}
 	if len(observation) == 0 {
 		observation = json.RawMessage("null")
 	}
 	if !json.Valid(observation) {
-		return nil, errors.New("openai: observation must contain valid JSON")
+		return JSONResult{}, errors.New("openai: observation must contain valid JSON")
 	}
 	payload, err := json.Marshal(struct {
 		State       json.RawMessage `json:"state"`
 		Observation json.RawMessage `json:"observation"`
 	}{state, observation})
 	if err != nil {
-		return nil, errors.New("openai: cannot encode state and observation")
+		return JSONResult{}, errors.New("openai: cannot encode state and observation")
 	}
 	return c.structured(ctx, instructions, payload, specification)
 }
 
-func (c *client) structured(ctx context.Context, instructions string, payload []byte, specification JSONSpecification) (json.RawMessage, error) {
+func (c *client) structured(ctx context.Context, instructions string, payload []byte, specification JSONSpecification) (JSONResult, error) {
 	params, err := structuredParams(instructions, payload, specification)
 	if err != nil {
-		return nil, err
+		return JSONResult{}, err
 	}
 	text, err := c.complete(ctx, params)
 	if err != nil {
-		return nil, err
+		return JSONResult{}, err
 	}
-	if !json.Valid([]byte(text)) {
-		return nil, errors.New("openai: structured response is not valid JSON")
+	if !json.Valid([]byte(text.Text)) {
+		return JSONResult{}, errors.New("openai: structured response is not valid JSON")
 	}
-	return json.RawMessage(text), nil
+	return JSONResult{JSON: json.RawMessage(text.Text), Usage: text.Usage}, nil
 }
 
-func (c *client) complete(ctx context.Context, params sdk.ChatCompletionNewParams) (string, error) {
+func (c *client) complete(ctx context.Context, params sdk.ChatCompletionNewParams) (TextResult, error) {
 	if ctx == nil {
-		return "", errors.New("openai: context is required")
+		return TextResult{}, errors.New("openai: context is required")
 	}
 	// The sole interaction timeout covers SDK execution and response reading.
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	response, err := c.service.New(ctx, params)
 	if ctx.Err() != nil {
-		return "", fmt.Errorf("openai: request failed: %w", ctx.Err())
+		return TextResult{}, fmt.Errorf("openai: request failed: %w", ctx.Err())
 	}
 	if err != nil {
-		return "", requestError(err)
+		return TextResult{}, requestError(err)
 	}
-	return extractText(response)
+	text, err := extractText(response)
+	if err != nil {
+		return TextResult{}, err
+	}
+	return TextResult{Text: text, Usage: extractUsage(response)}, nil
 }
 
 // Preserve context classification, but never retain an SDK error (which can hold

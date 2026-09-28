@@ -148,7 +148,7 @@ func TestPromptReturnsAssistantText(t *testing.T) {
 		completion(w, "  assistant text\n")
 	}, 0)
 	got, err := c.Prompt(context.Background(), prompt)
-	if err != nil || got != "  assistant text\n" {
+	if err != nil || got.Text != "  assistant text\n" {
 		t.Fatalf("unexpected text result: %v", err)
 	}
 }
@@ -178,7 +178,7 @@ func TestPromptWithSpecificationReturnsStructuredJSON(t *testing.T) {
 				completion(w, " {\"cash\":9007199254740993}\n")
 			}, 0)
 			got, err := c.PromptWithSpecification(context.Background(), "Read context.", "Return cash.", json.RawMessage(`{"cash":9007199254740993}`), spec)
-			if err != nil || string(got) != " {\"cash\":9007199254740993}\n" {
+			if err != nil || string(got.JSON) != " {\"cash\":9007199254740993}\n" {
 				t.Fatalf("structured response changed: %v", err)
 			}
 		})
@@ -219,7 +219,7 @@ func TestRequestMutation(t *testing.T) {
 				completion(w, result)
 			}, 0)
 			got, err := c.RequestMutation(context.Background(), "Propose mutation.", state, tc.observation, spec)
-			if err != nil || string(got) != result {
+			if err != nil || string(got.JSON) != result {
 				t.Fatalf("unexpected mutation result: %v", err)
 			}
 			if string(state) != before || string(tc.observation) != obsBefore {
@@ -311,7 +311,7 @@ func TestMalformedProviderResponses(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = io.WriteString(w, body)
 			}, 0)
-			if got, err := c.Prompt(context.Background(), "hello"); err == nil || got != "" {
+			if got, err := c.Prompt(context.Background(), "hello"); err == nil || got.Text != "" {
 				t.Fatal("malformed completion accepted")
 			}
 		})
@@ -321,10 +321,10 @@ func TestMalformedProviderResponses(t *testing.T) {
 func TestStructuredMethodsRejectMalformedJSON(t *testing.T) {
 	for _, result := range []string{"", " ", "not JSON", "```json\n{}\n```", "{} {}", `{"cash":}`} {
 		c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { completion(w, result) }, 0)
-		if got, err := c.PromptWithSpecification(context.Background(), "read", "read", json.RawMessage(`{}`), specification()); err == nil || got != nil {
+		if got, err := c.PromptWithSpecification(context.Background(), "read", "read", json.RawMessage(`{}`), specification()); err == nil || got.JSON != nil {
 			t.Error("invalid structured result accepted")
 		}
-		if got, err := c.RequestMutation(context.Background(), "read", json.RawMessage(`{}`), nil, specification()); err == nil || got != nil {
+		if got, err := c.RequestMutation(context.Background(), "read", json.RawMessage(`{}`), nil, specification()); err == nil || got.JSON != nil {
 			t.Error("invalid mutation result accepted")
 		}
 	}
@@ -475,10 +475,62 @@ func TestConcurrentInteractionsAreIndependent(t *testing.T) {
 			defer wg.Done()
 			prompt := fmt.Sprintf("request %d", i)
 			got, err := c.Prompt(context.Background(), prompt)
-			if err != nil || got != prompt {
+			if err != nil || got.Text != prompt {
 				t.Error("interaction mixed or failed")
 			}
 		}(i)
 	}
 	wg.Wait()
+}
+
+func TestUsageTravelsWithEachResponse(t *testing.T) {
+	for _, tc := range []struct {
+		name, usage string
+		want        *llm.Usage
+	}{
+		{"present", `{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}`, &llm.Usage{PromptTokens: 11, CompletionTokens: 7, TotalTokens: 18}},
+		{"zero", `{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}`, &llm.Usage{}},
+		{"missing", "", nil}, {"null", "null", nil}, {"empty", `{}`, nil},
+		{"partial", `{"prompt_tokens":11,"total_tokens":18}`, nil},
+		{"wrong type", `{"prompt_tokens":"11","completion_tokens":7,"total_tokens":18}`, nil},
+		{"fractional", `{"prompt_tokens":1.5,"completion_tokens":7,"total_tokens":8}`, nil},
+		{"negative", `{"prompt_tokens":-1,"completion_tokens":7,"total_tokens":6}`, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				body := `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"{}"}}]`
+				if tc.usage != "" {
+					body += `,"usage":` + tc.usage
+				}
+				io.WriteString(w, body+`}`)
+			}, 0)
+			text, err := c.Prompt(context.Background(), "hello")
+			if err != nil {
+				t.Fatal(err)
+			}
+			structured, err := c.PromptWithSpecification(context.Background(), "read", "read", json.RawMessage(`{}`), specification())
+			if err != nil {
+				t.Fatal(err)
+			}
+			mutation, err := c.RequestMutation(context.Background(), "read", json.RawMessage(`{}`), nil, specification())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, u := range []*llm.Usage{text.Usage, structured.Usage, mutation.Usage} {
+				if !reflect.DeepEqual(u, tc.want) {
+					t.Fatal("incorrect usage or fabricated availability")
+				}
+			}
+			if text.Text != "{}" || string(structured.JSON) != "{}" || string(mutation.JSON) != "{}" {
+				t.Fatal("usage changed content")
+			}
+			if text.Usage != nil {
+				text.Usage.PromptTokens = 99
+				if structured.Usage.PromptTokens == 99 || mutation.Usage.PromptTokens == 99 {
+					t.Fatal("usage shared across results")
+				}
+			}
+		})
+	}
 }

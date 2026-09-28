@@ -67,3 +67,27 @@ func extractText(response *sdk.ChatCompletion) (string, error) {
 	}
 	return message.Content, nil
 }
+
+// Incomplete, malformed, or absent metadata is unavailable, not zero usage.
+func extractUsage(response *sdk.ChatCompletion) *Usage {
+	u := response.Usage
+	if !response.JSON.Usage.Valid() || !u.JSON.PromptTokens.Valid() || !u.JSON.CompletionTokens.Valid() || !u.JSON.TotalTokens.Valid() {
+		return nil
+	}
+	// The SDK tolerates some type coercions. Require actual integer JSON fields
+	// before treating counts as authoritative; quoted or fractional values fail.
+	var result Usage
+	for _, field := range []struct {
+		raw    string
+		target *int64
+	}{
+		{u.JSON.PromptTokens.Raw(), &result.PromptTokens},
+		{u.JSON.CompletionTokens.Raw(), &result.CompletionTokens},
+		{u.JSON.TotalTokens.Raw(), &result.TotalTokens},
+	} {
+		if json.Unmarshal([]byte(field.raw), field.target) != nil || *field.target < 0 {
+			return nil
+		}
+	}
+	return &result
+}

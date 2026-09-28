@@ -2,7 +2,10 @@ module github.com/vectorphresh/0001-grodt
 
 go 1.25.0
 
-require github.com/openai/openai-go/v3 v3.66.0
+require (
+	github.com/openai/openai-go/v3 v3.66.0
+	go.yaml.in/yaml/v3 v3.0.5
+)
 
 require (
 	github.com/coder/websocket v1.8.15 // indirect

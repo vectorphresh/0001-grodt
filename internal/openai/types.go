@@ -30,14 +30,33 @@ type JSONSpecification struct {
 	Strict      bool            `json:"strict"`
 }
 
+// Usage contains authoritative per-response token counts. No local estimates are used.
+type Usage struct {
+	PromptTokens     int64
+	CompletionTokens int64
+	TotalTokens      int64
+}
+
+// TextResult pairs assistant text with its usage; nil Usage means unavailable.
+type TextResult struct {
+	Text  string
+	Usage *Usage
+}
+
+// JSONResult pairs structured JSON with its usage; nil Usage means unavailable.
+type JSONResult struct {
+	JSON  json.RawMessage
+	Usage *Usage
+}
+
 // Client has no conversation history. Each method uses only its supplied inputs.
 // Blank prompts/instructions and malformed JSON are rejected locally. Structured
 // results retain their original text and are checked for JSON syntax, not schema
 // or domain semantics. Errors never expose SDK types or provider response bodies.
 type Client interface {
-	Prompt(ctx context.Context, prompt string) (string, error)
-	PromptWithSpecification(ctx context.Context, instructions string, prompt string, context json.RawMessage, specification JSONSpecification) (json.RawMessage, error)
+	Prompt(ctx context.Context, prompt string) (TextResult, error)
+	PromptWithSpecification(ctx context.Context, instructions string, prompt string, context json.RawMessage, specification JSONSpecification) (JSONResult, error)
 	// RequestMutation only proposes a mutation. It never modifies caller data.
 	// A nil or empty observation is represented as JSON null.
-	RequestMutation(ctx context.Context, instructions string, state json.RawMessage, observation json.RawMessage, specification JSONSpecification) (json.RawMessage, error)
+	RequestMutation(ctx context.Context, instructions string, state json.RawMessage, observation json.RawMessage, specification JSONSpecification) (JSONResult, error)
 }
