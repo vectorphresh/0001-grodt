@@ -1,6 +1,6 @@
 // Package contracts provides independent semantic operations over a prepared
-// contract set. It constrains generation, but does not independently validate
-// proposals or define their application semantics, including omitted fields.
+// contract set. It validates generated structure, but does not define proposal
+// application semantics, including omitted fields.
 package contracts
 
 import (
@@ -27,20 +27,24 @@ type Input struct {
 	Context     json.RawMessage
 }
 
-// Selection retains accounting even when an invoked operation fails.
+// Selection retains accounting even when an invoked operation fails. Usage is
+// the known subtotal; UsageRequests reports how many calls supplied usage.
 type Selection struct {
-	Names    []string
-	Usage    *openai.Usage
-	Requests uint64
+	Names         []string
+	Usage         *openai.Usage
+	Requests      uint64
+	UsageRequests uint64
 }
 
 // Mutation is generated JSON, returned unchanged. It is not approved for state
 // application. Requests counts Component 001 invocations, including failed ones.
-// Usage is nil when unavailable; an empty writable subset makes zero requests.
+// Usage is the known subtotal (nil when unavailable); UsageRequests reports
+// coverage. An empty writable subset makes zero requests.
 type Mutation struct {
-	JSON     json.RawMessage
-	Usage    *openai.Usage
-	Requests uint64
+	JSON          json.RawMessage
+	Usage         *openai.Usage
+	Requests      uint64
+	UsageRequests uint64
 }
 
 // Reducer retains only an immutable contract definition and a client. Operations

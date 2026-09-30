@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+
+	"github.com/vectorphresh/0001-grodt/internal/openai"
+	"github.com/vectorphresh/0001-grodt/internal/structured"
 )
 
 const reductionInstructions = "Inspect current state, new information, and semantic context. Produce proposed JSON using only the supplied optional contract properties where the information warrants a proposal. Preserve the meaning of authoritative observations; do not invent facts. An empty object is allowed. The schema constrains proposal shape only: do not infer replacement, merge, patch, deletion, or application semantics from presence or omission."
@@ -44,10 +47,16 @@ func (r *Reducer) Reduce(ctx context.Context, input Input, names []string) (Muta
 	if err != nil {
 		return Mutation{}, errors.New("contracts: cannot encode reduction input")
 	}
-	result, err := r.client.RequestMutation(ctx, reductionInstructions, input.State, observation, spec)
-	mutation := Mutation{Requests: 1, Usage: result.Usage}
+	result, err := structured.Generate(ctx, spec.Schema, func(ctx context.Context, feedback json.RawMessage) (openai.JSONResult, error) {
+		candidate, err := r.client.RequestMutation(ctx, structured.WithFeedback(reductionInstructions, feedback), input.State, observation, spec)
+		if err != nil {
+			return candidate, operationError(ctx, err)
+		}
+		return candidate, nil
+	})
+	mutation := Mutation{Requests: result.Requests, Usage: result.Usage, UsageRequests: result.UsageRequests}
 	if err != nil {
-		return mutation, operationError(ctx, err)
+		return mutation, err
 	}
 	if err := checkContext(ctx); err != nil {
 		return mutation, err
@@ -56,8 +65,7 @@ func (r *Reducer) Reduce(ctx context.Context, input Input, names []string) (Muta
 	if !json.Valid(data) || data[0] != '{' {
 		return mutation, errors.New("contracts: proposal must be a JSON object")
 	}
-	// This is not schema validation. Return original bytes, including whitespace,
-	// and leave all conformance, authorization, and application decisions to callers.
+	// Return validated original bytes. Authorization and application remain caller decisions.
 	mutation.JSON = result.JSON
 	return mutation, nil
 }

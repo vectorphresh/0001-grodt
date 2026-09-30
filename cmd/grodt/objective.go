@@ -12,6 +12,7 @@ import (
 
 	"github.com/vectorphresh/0001-grodt/internal/loop"
 	"github.com/vectorphresh/0001-grodt/internal/openai"
+	"github.com/vectorphresh/0001-grodt/internal/structured"
 )
 
 // GoalEvaluation is an application judgment, never a state mutation.
@@ -33,7 +34,10 @@ func evaluate(ctx context.Context, client openai.Client, objective, initial stri
 	if err != nil {
 		return GoalEvaluation{}, errors.New("cannot encode evaluation input")
 	}
-	result, err := client.RequestMutation(ctx, evaluationInstructions, data, json.RawMessage(`{"purpose":"goal_evaluation"}`), openai.JSONSpecification{Name: "goal_evaluation", Schema: json.RawMessage(evaluationSchema), Strict: true})
+	spec := openai.JSONSpecification{Name: "goal_evaluation", Schema: json.RawMessage(evaluationSchema), Strict: true}
+	result, err := structured.Generate(ctx, spec.Schema, func(ctx context.Context, feedback json.RawMessage) (openai.JSONResult, error) {
+		return client.RequestMutation(ctx, structured.WithFeedback(evaluationInstructions, feedback), data, json.RawMessage(`{"purpose":"goal_evaluation"}`), spec)
+	})
 	if err != nil {
 		return GoalEvaluation{}, err
 	}

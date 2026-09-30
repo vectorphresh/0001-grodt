@@ -173,7 +173,7 @@ func TestFailuresAbortWithoutInferenceOrRetry(t *testing.T) {
 				mutation: func(context.Context, string, json.RawMessage, json.RawMessage, openai.JSONSpecification) (openai.JSONResult, error) {
 					e++
 					if stage == "decode" {
-						return openai.JSONResult{JSON: json.RawMessage(`{}`)}, nil
+						return openai.JSONResult{JSON: json.RawMessage(`{"achieved":true,"rationale":" "}`)}, nil
 					}
 					return openai.JSONResult{}, cause
 				},

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/vectorphresh/0001-grodt/internal/openai"
+	"github.com/vectorphresh/0001-grodt/internal/structured"
 )
 
 type fakeClient struct {
@@ -206,16 +207,19 @@ func TestInvalidSelectionDoesNotBecomeEmptySuccess(t *testing.T) {
 			return openai.JSONResult{JSON: json.RawMessage(response)}, nil
 		}})
 		result, err := r.Select(context.Background(), json.RawMessage(`{}`), nil)
-		if err == nil || result.Names != nil || result.Requests != 1 {
+		want := uint64(1)
+		if json.Valid([]byte(response)) {
+			want = structured.MaxStructuredAttempts
+		}
+		if err == nil || result.Names != nil || result.Requests != want {
 			t.Fatal("invalid selection accepted or accounting lost")
 		}
 	}
 }
 
 func TestReductionDoesNotRequireSelectionOrInterpretProposal(t *testing.T) {
-	// Deliberately outside the offered shape: conformance and authorization are
-	// future concerns. This component must return the generated object unchanged.
-	const proposal = " \n{\"not_selected\":{\"unexpected\":true}}\t"
+	// A structurally valid proposal remains unchanged and is never applied.
+	const proposal = " \n{\"account\":{\"cash\":9007199254740993}}\t"
 	input := validInput()
 	input.Context = json.RawMessage(`{"intent":"opaque"}`)
 	stateBefore, infoBefore, contextBefore := string(input.State), string(input.Information), string(input.Context)
@@ -262,13 +266,17 @@ func TestEmptySelectionSkipsMutation(t *testing.T) {
 	}
 }
 
-func TestReductionRequiresOnlyObjectRepresentation(t *testing.T) {
+func TestReductionRejectsInvalidProposals(t *testing.T) {
 	for _, response := range []string{`null`, `[]`, `1`, `"text"`, `{`, `{} {}`} {
 		r := newReducer(t, fakeClient{reduceFn: func(context.Context, string, json.RawMessage, json.RawMessage, openai.JSONSpecification) (openai.JSONResult, error) {
 			return openai.JSONResult{JSON: json.RawMessage(response), Usage: &openai.Usage{TotalTokens: 7}}, nil
 		}})
 		result, err := r.Reduce(context.Background(), validInput(), []string{"memory"})
-		if err == nil || result.JSON != nil || result.Requests != 1 || result.Usage == nil {
+		want := uint64(1)
+		if json.Valid([]byte(response)) {
+			want = structured.MaxStructuredAttempts
+		}
+		if err == nil || result.JSON != nil || result.Requests != want || result.Usage == nil || result.Usage.TotalTokens != int64(want)*7 {
 			t.Fatal("unusable proposal accepted or accounting lost")
 		}
 	}

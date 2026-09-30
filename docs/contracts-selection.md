@@ -17,6 +17,8 @@ writability filtering
     ↓
 structured reduction
     ↓
+structural validation (bounded correction if needed)
+    ↓
 proposed mutation
 ```
 
@@ -25,11 +27,12 @@ Component 004 (`internal/contracts`) is responsible only for:
 - selecting relevant declared contracts;
 - mechanically composing a response specification from selected writable contracts;
 - asking the LLM to reduce arbitrary information into that specification;
-- returning the resulting proposal unchanged apart from basic mechanical JSON checks.
+- structurally validating generated selection and proposal JSON;
+- returning each accepted proposal with its original bytes.
 
 It does not:
 
-- validate mutations;
+- validate domain meaning or mutation authority;
 - apply mutations;
 - define merge or replacement semantics;
 - persist state;
@@ -475,7 +478,7 @@ Component 004 outputs a proposed mutation.
 
 That proposal is not trusted state.
 
-The intended future flow is:
+The flow now includes structural validation; state application remains future work:
 
 ```text
 Contract Definition
@@ -523,8 +526,45 @@ Go defines the legal surface.
 
 The LLM interprets arbitrary information and proposes how it maps onto that surface.
 
-Future validators decide whether the proposal is acceptable.
+Structural validation now gates generated proposals; future domain checks may decide further acceptability.
 
 Future state logic decides how accepted information is applied.
 
 This keeps semantic flexibility in the model without allowing the model to define the system's structural boundaries.
+## Structural validation and correction
+
+Goal evaluation, contract selection, and contract reduction validate successful
+structured responses against the same specification supplied to the LLM. The
+validator remains independent of contracts, providers, and state. Accepted JSON
+is returned unchanged; existing selection ordering and evaluation checks still
+apply. No authoritative state is applied or changed by this integration.
+
+`internal/structured.MaxStructuredAttempts = 3` allows one initial inference and
+at most two corrections per operation. This is independent of the CLI's 20-cycle
+limit: correction repeats one structured operation, while an agent cycle performs
+generation and evaluation, and contract operations can run independently.
+
+Corrections retain the original operation inputs and specification. Instructions
+include a separate JSON envelope containing the exact previous candidate as a
+string, native structured validation diagnostics, and a correction instruction.
+Only syntactically valid JSON that violates its schema receives this feedback.
+Malformed JSON and provider/transport errors remain terminal; there is no JSON
+repair or automatic provider retry. Schema errors also abort without correction.
+After three invalid candidates, the operation returns an attempt-limit error and
+no candidate; the CLI discards the failed cycle without publishing its response.
+
+Every inference is counted. Contract results report `Requests`, the known token
+subtotal in `Usage`, and `UsageRequests` for coverage. Nil usage remains
+unavailable, not a zero-token estimate. Empty writable subsets still return `{}`
+without inference. CLI evaluation corrections use its existing observed client.
+
+The opt-in smoke test uses the normal configured client and configuration resolver:
+
+```sh
+go test -tags live ./cmd/grodt -run '^TestLiveStructuralValidation$' -count=1 -v
+```
+
+It defaults to the repository's `config.yaml`; `GRODT_LIVE_CONFIG` can select a
+separate file. Normal YAML/environment precedence applies. Missing configuration
+skips the test. The live test is excluded from ordinary `go test ./...` runs.
+`SKILL.state` remains future context only; this checkpoint defines no state behavior.

@@ -5,12 +5,16 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/vectorphresh/0001-grodt/internal/config"
 	"github.com/vectorphresh/0001-grodt/internal/openai"
+	"github.com/vectorphresh/0001-grodt/internal/structured"
 )
 
 // Explicitly opt in: go test -tags live ./cmd/grodt -run '^TestLive' -v -count=1
@@ -61,4 +65,53 @@ func TestLiveAutonomousGoals(t *testing.T) {
 			t.Log(diag.String()[index+1:])
 		})
 	}
+}
+
+// TestLiveStructuralValidation exercises the production structured gate with the
+// normal YAML/environment configuration path. Missing configuration is optional.
+// go test -tags live ./cmd/grodt -run '^TestLiveStructuralValidation$' -count=1 -v
+func TestLiveStructuralValidation(t *testing.T) {
+	path := os.Getenv("GRODT_LIVE_CONFIG")
+	if path == "" {
+		path = "../../config.yaml"
+	}
+	resolver, err := config.Load(path)
+	if errors.Is(err, os.ErrNotExist) {
+		t.Skip("live configuration file is unavailable")
+	}
+	if err != nil {
+		t.Fatal("live configuration file is invalid")
+	}
+	for _, name := range []string{"OPENAI_BASE_URL", "OPENAI_API_KEY"} {
+		value, err := resolver.GetEnvironment("openai", name)
+		if errors.Is(err, config.ErrNotFound) || (err == nil && strings.TrimSpace(value) == "") {
+			t.Skip("live provider configuration is unavailable")
+		}
+		if err != nil {
+			t.Fatal("live provider configuration is invalid")
+		}
+	}
+	client, _, err := configuredClient(path)
+	if err != nil {
+		if errors.Is(err, config.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
+			t.Skip("live provider configuration is unavailable")
+		}
+		t.Fatal("live provider configuration is invalid")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	spec := openai.JSONSpecification{Name: "validation_smoke", Strict: true, Schema: json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}`)}
+	result, err := structured.Generate(ctx, spec.Schema, func(ctx context.Context, feedback json.RawMessage) (openai.JSONResult, error) {
+		return client.PromptWithSpecification(ctx, structured.WithFeedback("Return the requested JSON object.", feedback), "Return an object with answer equal to OK.", json.RawMessage(`{}`), spec)
+	})
+	if err != nil {
+		t.Fatal("live structured operation failed")
+	}
+	var accepted struct {
+		Answer string `json:"answer"`
+	}
+	if json.Unmarshal(result.JSON, &accepted) != nil || accepted.Answer != "OK" {
+		t.Fatal("unexpected accepted answer")
+	}
+	t.Logf("Structured response accepted; requests=%d, usage coverage=%d/%d", result.Requests, result.UsageRequests, result.Requests)
 }

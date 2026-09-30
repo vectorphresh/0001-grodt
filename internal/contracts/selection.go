@@ -8,6 +8,7 @@ import (
 	"io"
 
 	"github.com/vectorphresh/0001-grodt/internal/openai"
+	"github.com/vectorphresh/0001-grodt/internal/structured"
 )
 
 const selectionInstructions = "Select zero, one, or multiple declared contracts that may be affected by the new information and semantic context. Favor recall when there is plausible durable relevance. Selection does not imply that a contract must change. Include read-only contracts when relevant, but do not invent names. Return an empty relevant array for information with no durable relevance."
@@ -49,10 +50,17 @@ func (r *Reducer) Select(ctx context.Context, information, semanticContext json.
 	if err != nil {
 		return Selection{}, errors.New("contracts: cannot encode selection specification")
 	}
-	result, err := r.client.PromptWithSpecification(ctx, selectionInstructions, "Which declared contracts may be affected by this information?", data, openai.JSONSpecification{Name: "contract_selection", Schema: schema, Strict: true})
-	selection := Selection{Requests: 1, Usage: result.Usage}
+	spec := openai.JSONSpecification{Name: "contract_selection", Schema: schema, Strict: true}
+	result, err := structured.Generate(ctx, spec.Schema, func(ctx context.Context, feedback json.RawMessage) (openai.JSONResult, error) {
+		candidate, err := r.client.PromptWithSpecification(ctx, structured.WithFeedback(selectionInstructions, feedback), "Which declared contracts may be affected by this information?", data, spec)
+		if err != nil {
+			return candidate, operationError(ctx, err)
+		}
+		return candidate, nil
+	})
+	selection := Selection{Requests: result.Requests, Usage: result.Usage, UsageRequests: result.UsageRequests}
 	if err != nil {
-		return selection, operationError(ctx, err)
+		return selection, err
 	}
 	if err := checkContext(ctx); err != nil {
 		return selection, err
