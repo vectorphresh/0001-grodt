@@ -8,12 +8,22 @@ import (
 	"io"
 
 	"github.com/vectorphresh/0001-grodt/internal/openai"
+	"github.com/vectorphresh/0001-grodt/internal/stateflow"
 	"github.com/vectorphresh/0001-grodt/internal/structured"
 )
 
 const selectionInstructions = "Select zero, one, or multiple declared contracts that may be affected by the new information and semantic context. Favor recall when there is plausible durable relevance. Selection does not imply that a contract must change. Include read-only contracts when relevant, but do not invent names. Return an empty relevant array for information with no durable relevance."
 
-func (r *Reducer) Select(ctx context.Context, information, semanticContext json.RawMessage) (Selection, error) {
+func (r *Reducer) Select(ctx context.Context, information, semanticContext json.RawMessage) (out Selection, opErr error) {
+	var accepted json.RawMessage
+	defer func() {
+		if out.Requests > 0 {
+			if err := stateflow.Observe(ctx, r.client, "contract_selection", accepted, opErr); err != nil {
+				opErr = err
+				out.Names = nil
+			}
+		}
+	}()
 	if err := checkContext(ctx); err != nil {
 		return Selection{}, err
 	}
@@ -79,6 +89,7 @@ func (r *Reducer) Select(ctx context.Context, information, semanticContext json.
 			selection.Names = append(selection.Names, c.Name)
 		}
 	}
+	accepted = result.JSON
 	return selection, nil
 }
 

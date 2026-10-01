@@ -7,12 +7,22 @@ import (
 	"errors"
 
 	"github.com/vectorphresh/0001-grodt/internal/openai"
+	"github.com/vectorphresh/0001-grodt/internal/stateflow"
 	"github.com/vectorphresh/0001-grodt/internal/structured"
 )
 
 const reductionInstructions = "Inspect current state, new information, and semantic context. Produce proposed JSON using only the supplied optional contract properties where the information warrants a proposal. Preserve the meaning of authoritative observations; do not invent facts. An empty object is allowed. The schema constrains proposal shape only: do not infer replacement, merge, patch, deletion, or application semantics from presence or omission."
 
-func (r *Reducer) Reduce(ctx context.Context, input Input, names []string) (Mutation, error) {
+func (r *Reducer) Reduce(ctx context.Context, input Input, names []string) (out Mutation, opErr error) {
+	var accepted json.RawMessage
+	defer func() {
+		if out.Requests > 0 {
+			if err := stateflow.Observe(ctx, r.client, "contract_reduction", accepted, opErr); err != nil {
+				opErr = err
+				out.JSON = nil
+			}
+		}
+	}()
 	if err := checkContext(ctx); err != nil {
 		return Mutation{}, err
 	}
@@ -67,6 +77,7 @@ func (r *Reducer) Reduce(ctx context.Context, input Input, names []string) (Muta
 	}
 	// Return validated original bytes. Authorization and application remain caller decisions.
 	mutation.JSON = result.JSON
+	accepted = result.JSON
 	return mutation, nil
 }
 

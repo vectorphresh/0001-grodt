@@ -12,7 +12,7 @@ go build -o /tmp/grodt ./cmd/grodt
 /tmp/grodt --trace --config configs/local.yaml "Explain the purpose of this project."
 ```
 
-Command shape: `grodt [--trace] [--config path] <prompt>`. Quote the prompt as one
+Command shape: `grodt [--trace] [--config path] [--state-definition path] [--allow-state-http] <prompt>`. Quote the prompt as one
 argument and put options before it. Configuration defaults to `config.yaml`.
 Use `--` before a prompt that starts with `-`. Do not put credentials in prompts
 or command arguments.
@@ -35,13 +35,19 @@ Each cycle performs two synchronous LLM calls:
 The evaluation JSON is decoded, never applied as a mutation. The application
 currently trusts the model's judgment. A negative evaluation adds the response
 and rationale as temporary guidance for another cycle, without asking a human.
-A failed generation skips evaluation; a failed/invalid evaluation cannot trigger
-continuation. There are no automatic retries or detached provider operations.
+A failed generation skips evaluation; a terminally invalid evaluation cannot
+trigger continuation. Schema-invalid JSON allows at most two corrective inferences;
+provider failures and malformed JSON are terminal. There are no detached operations.
 
-The private limit is **20 cycles** (normally at most 40 LLM calls). This is an
+The private limit is **20 cycles** (normally 40 calls, at most 80 with evaluation corrections). This is an
 execution guard, not a retry count. Temporary context can grow across those
-cycles and is not a persistent or bounded-memory strategy. No SKILL.state, MCP,
-tools, or world-state mutation are implemented.
+cycles. Run-owned in-memory state now tracks intrinsic facts, a root task, and
+optional WASM-owned knowledge partitions. Every inference receives complete current
+state; only accepted operation results reach modules. Modules can request bounded
+HTTP work as sequential child tasks when `--allow-state-http` is explicitly set.
+HTTP is disabled by default. No task planner, MCP integration, persistence, or
+dynamic module authoring is implemented.
+See [general state](docs/general-state.md) and the [module ABI](docs/state-module-abi.md).
 
 Final response goes to stdout. Progress, objective, status, rationale, and metrics
 go to stderr. `--trace` additionally shows the generation prompt and structured

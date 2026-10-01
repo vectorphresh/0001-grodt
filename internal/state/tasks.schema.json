@@ -1,0 +1,117 @@
+{
+  "type": "object",
+  "properties": {
+    "records": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "parent_id": {
+            "type": "string"
+          },
+          "objective": {
+            "type": "string",
+            "minLength": 1
+          },
+          "input": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "finished_at": {
+            "type": "string"
+          },
+          "result": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "running",
+              "waiting",
+              "completed",
+              "failed",
+              "cancelled",
+              "incomplete",
+              "pending"
+            ]
+          },
+          "cycles": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "order": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "work": {
+            "type": "object",
+            "properties": {
+              "partition": {
+                "type": "string"
+              },
+              "event_id": {
+                "type": "string"
+              },
+              "request": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "http"
+                  },
+                  "payload": {}
+                },
+                "required": [
+                  "id",
+                  "kind",
+                  "payload"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "partition",
+              "event_id",
+              "request"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "objective",
+          "input",
+          "status",
+          "created_at",
+          "cycles",
+          "order"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "stack": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    }
+  },
+  "required": [
+    "records",
+    "stack"
+  ],
+  "additionalProperties": false
+}

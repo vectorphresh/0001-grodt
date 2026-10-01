@@ -1,0 +1,11 @@
+{
+  "partitions": [
+    {
+      "name": "counter",
+      "schema": "schema.json",
+      "initial": "initial.json",
+      "module": "reference.wasm",
+      "abi": "grodt.state/v1"
+    }
+  ]
+}

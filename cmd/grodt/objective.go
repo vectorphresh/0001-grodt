@@ -12,6 +12,8 @@ import (
 
 	"github.com/vectorphresh/0001-grodt/internal/loop"
 	"github.com/vectorphresh/0001-grodt/internal/openai"
+	runstate "github.com/vectorphresh/0001-grodt/internal/state"
+	"github.com/vectorphresh/0001-grodt/internal/stateflow"
 	"github.com/vectorphresh/0001-grodt/internal/structured"
 )
 
@@ -24,7 +26,14 @@ type GoalEvaluation struct {
 const evaluationInstructions = "Determine whether the original objective has been achieved using the supplied execution information. Set achieved=true only when the objective is satisfied by the current response. An intermediate step is not completion. Return the requested structured evaluation with a concise outcome rationale, not private reasoning."
 const evaluationSchema = `{"type":"object","properties":{"achieved":{"type":"boolean"},"rationale":{"type":"string"}},"required":["achieved","rationale"],"additionalProperties":false}`
 
-func evaluate(ctx context.Context, client openai.Client, objective, initial string, state loop.State) (GoalEvaluation, error) {
+func evaluate(ctx context.Context, client openai.Client, objective, initial string, state loop.State) (out GoalEvaluation, opErr error) {
+	var accepted json.RawMessage
+	defer func() {
+		if err := stateflow.Observe(ctx, client, "goal_evaluation", accepted, opErr); err != nil {
+			out = GoalEvaluation{}
+			opErr = err
+		}
+	}()
 	data, err := json.Marshal(struct {
 		Objective       string   `json:"objective"`
 		InitialPrompt   string   `json:"initial_prompt"`
@@ -41,7 +50,11 @@ func evaluate(ctx context.Context, client openai.Client, objective, initial stri
 	if err != nil {
 		return GoalEvaluation{}, err
 	}
-	return decodeEvaluation(result.JSON)
+	evaluation, err := decodeEvaluation(result.JSON)
+	if err == nil {
+		accepted = result.JSON
+	}
+	return evaluation, err
 }
 
 // Decode exact keys, rejecting duplicates, nulls, omissions, and wrong types.
@@ -92,14 +105,30 @@ func decodeEvaluation(data []byte) (GoalEvaluation, error) {
 	return GoalEvaluation{Achieved: *wire.Achieved, Rationale: *wire.Rationale}, nil
 }
 
-// Only valid evaluations drive continuation. Context is temporary model guidance,
-// not authoritative world state. No failed cycle is committed or retried.
-func runObjective(ctx context.Context, objective, initial string, providers []loop.Provider, client openai.Client, output io.Writer, status *terminalStatus, metrics *runMetrics) (runErr error) {
+// Only valid evaluations drive continuation. Temporary guidance remains separate
+// from run state. Accepted observations and failure metadata survive failed cycles;
+// failed cycles never publish a response or retry provider errors.
+func runObjective(ctx context.Context, objective, initial string, providers []loop.Provider, client openai.Client, output io.Writer, status *terminalStatus, metrics *runMetrics, store *runstate.Store) (runErr error) {
 	if strings.TrimSpace(objective) == "" {
 		return errors.New("run objective must not be blank")
 	}
 	if strings.TrimSpace(initial) == "" {
 		return errors.New("initial prompt must not be blank")
+	}
+	if _, err := store.Push(ctx, objective, initial); err != nil {
+		return err
+	}
+	input, _ := json.Marshal(struct {
+		Objective string `json:"objective"`
+		Request   string `json:"request"`
+	}{objective, initial})
+	if _, err := store.Admit(ctx, runstate.Source{Kind: "user", ID: store.Snapshot().Intrinsic.RunID + "/user"}, input); err != nil {
+		status := "failed"
+		if errors.Is(err, context.Canceled) {
+			status = "cancelled"
+		}
+		_ = store.End(context.WithoutCancel(ctx), status)
+		return err
 	}
 	outcome := "failed"
 	rationale := ""
@@ -114,6 +143,13 @@ func runObjective(ctx context.Context, objective, initial string, providers []lo
 		if errors.Is(runErr, context.DeadlineExceeded) {
 			rationale = "Operation timed out; cycle discarded."
 		}
+		if outcome != "achieved" {
+			taskStatus := outcome
+			if taskStatus != "cancelled" && taskStatus != "incomplete" {
+				taskStatus = "failed"
+			}
+			_ = store.End(context.WithoutCancel(ctx), taskStatus)
+		}
 		if reportErr := reportRun(status, objective, outcome, rationale, *metrics); reportErr != nil {
 			runErr = reportErr
 		}
@@ -121,6 +157,9 @@ func runObjective(ctx context.Context, objective, initial string, providers []lo
 	history := []string{}
 	for cycle := 1; cycle <= maxCycles; cycle++ {
 		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := store.BeginCycle(ctx); err != nil {
 			return err
 		}
 		if err := status.log("Cycle %d/%d", cycle, maxCycles); err != nil {
@@ -155,6 +194,9 @@ func runObjective(ctx context.Context, objective, initial string, providers []lo
 				}
 			}
 			if evaluation.Achieved {
+				if err := store.Complete(ctx, state.Response); err != nil {
+					return err
+				}
 				outcome = "achieved"
 				return nil
 			}
@@ -175,7 +217,7 @@ func safeCycleError(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	for _, sentinel := range []error{context.Canceled, context.DeadlineExceeded} {
+	for _, sentinel := range []error{context.Canceled, context.DeadlineExceeded, runstate.ErrHostBudget} {
 		if errors.Is(err, sentinel) {
 			return sentinel
 		}

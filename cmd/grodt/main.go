@@ -14,11 +14,14 @@ import (
 	"github.com/vectorphresh/0001-grodt/internal/config"
 	"github.com/vectorphresh/0001-grodt/internal/loop"
 	"github.com/vectorphresh/0001-grodt/internal/openai"
+	runstate "github.com/vectorphresh/0001-grodt/internal/state"
+	"github.com/vectorphresh/0001-grodt/internal/state/wasm"
+	"github.com/vectorphresh/0001-grodt/internal/stateflow"
 )
 
 const defaultObjective = "Complete the user's request using the information supplied in this run."
 const maxCycles = 20
-const usage = "usage: grodt [--trace] [--config path] <prompt>"
+const usage = "usage: grodt [--trace] [--config path] [--state-definition path] [--allow-state-http] <prompt>"
 
 var errIncomplete = errors.New("objective incomplete: cycle limit reached")
 
@@ -46,6 +49,8 @@ func exitCode(err error) int {
 func run(ctx context.Context, args []string, output, diagnostics io.Writer) error {
 	flags := flag.NewFlagSet("grodt", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	allowHTTP := flags.Bool("allow-state-http", false, "allow state modules to request HTTP work")
+	statePath := flags.String("state-definition", "", "state partition definition file")
 	trace := flags.Bool("trace", false, "show generation and evaluation inputs")
 	path := flags.String("config", "config.yaml", "configuration file")
 	if err := flags.Parse(args); err != nil {
@@ -63,7 +68,18 @@ func run(ctx context.Context, args []string, output, diagnostics io.Writer) erro
 		return err
 	}
 	status := &terminalStatus{writer: diagnostics, trace: *trace, key: key}
-	return execute(ctx, defaultObjective, flags.Arg(0), client, output, status)
+	if *statePath == "" {
+		return execute(ctx, defaultObjective, flags.Arg(0), client, output, status)
+	}
+	store, err := wasm.Load(ctx, *statePath, runstate.Options{AllowHTTP: *allowHTTP})
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return errors.New("state initialization failed")
+	}
+	defer store.Close(context.Background())
+	return executeWithState(ctx, defaultObjective, flags.Arg(0), client, output, status, store)
 }
 
 func configuredClient(path string) (openai.Client, string, error) {
@@ -85,8 +101,18 @@ func configuredClient(path string) (openai.Client, string, error) {
 
 // execute owns metrics and composes the same observed client into both operations.
 func execute(ctx context.Context, objective, initial string, client openai.Client, output io.Writer, status *terminalStatus) error {
+	store, err := runstate.New(ctx, nil, runstate.Options{})
+	if err != nil {
+		return err
+	}
+	defer store.Close(context.Background())
+	return executeWithState(ctx, objective, initial, client, output, status, store)
+}
+
+func executeWithState(ctx context.Context, objective, initial string, client openai.Client, output io.Writer, status *terminalStatus, store *runstate.Store) error {
 	metrics := runMetrics{}
 	observed := observedClient{Client: client, status: status, metrics: &metrics}
-	providers := []loop.Provider{loop.NewGenericProvider(observed)}
-	return runObjective(ctx, objective, initial, providers, observed, output, status, &metrics)
+	withState := &stateflow.Client{Client: observed, Store: store}
+	providers := []loop.Provider{loop.NewGenericProvider(withState)}
+	return runObjective(ctx, objective, initial, providers, withState, output, status, &metrics, store)
 }
