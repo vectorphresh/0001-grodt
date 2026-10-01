@@ -217,3 +217,92 @@ Deterministic tests use local HTTP servers and the import-free WASM reference:
 ```sh
 go test ./internal/state/... ./internal/stateflow/... ./cmd/grodt/...
 ```
+
+## Stateful feedback milestone
+
+The gathering integration scenario exercises the production cycle runner,
+`loop.StructuredProvider`, `stateflow.Client`, manifest-loaded WASM, event journal,
+and validated atomic commits. Both deterministic and live modes share this path.
+The ordinary CLI still uses its existing generic provider and LLM goal evaluator.
+An injected completion evaluator allows this scenario to check observable outcomes
+independently; it does not replace ordinary CLI behavior.
+
+The objective is to obtain three units of wood and return to camp. Initial
+knowledge contains only camp, zero wood, and no known locations. The action
+contract is `{action, target}` with explore/move/gather/finish actions and a free
+string target; neither the prompt nor the action schema reveals the forest,
+direction, or resource-location mapping. The deterministic environment knows the
+world, interprets accepted actions, and emits runtime events. It cannot access or
+edit the Store. The real WASM fixture alone proposes partition mutations from
+those environment events. Accepted LLM actions and unrelated events are ignored
+by the fixture.
+
+`finish` requests evaluation. Completion requires authoritative knowledge and
+independent environment truth to agree that the agent is at camp with at least
+three wood. An early finish returns an incomplete evaluation and continues;
+repeated early finishes eventually reach the unchanged 20-cycle limit. Structural
+corrections remain limited to three attempts per operation; invalid candidates
+never execute. Invalid world actions generate deterministic rejection events.
+
+Rejected completion requests now identify insufficient recorded wood, an incorrect
+recorded location, or both. Stale partition values and disagreement with independent
+environment verification are reported separately. Explanations state current values
+and objective requirements without prescribing an action or revealing unobserved
+world values. The successful rationale and completion predicates are unchanged.
+The runner's existing continuation history carries the exact rejection rationale
+into the next structured inference context. Deterministic tests verify that delivery
+and that requesting/rejecting completion changes neither partition values nor
+partition metadata.
+
+The scripted decision source reads the same composed snapshot delivered to the
+live client. It chooses exploration without discovered knowledge and movement
+when discovery provides a resource location. Assertions connect discovery event,
+validated commit, subsequent inference input, movement, gathering, return, and
+verified finish. Journal checks ensure every domain mutation follows an
+environment-authored event. No exact natural-language rationale or fixed live
+action sequence is required.
+
+Run deterministic tests without external LLM access:
+
+```sh
+go test ./cmd/grodt -run 'Test(StatefulFeedbackLoop|PrematureFinish|RepeatedPrematureFinish|Gathering|InvalidGathering|FeedbackCorrection)' -count=1 -v
+go test -race ./...
+```
+
+Run the live acceptance milestone explicitly:
+
+```sh
+go test -tags live ./cmd/grodt -run '^TestLiveStatefulFeedbackLoop$' -count=1 -v
+```
+
+It uses the existing YAML/environment resolution (`config.yaml` at the repository
+root by default, or `GRODT_LIVE_CONFIG`), with a two-minute overall deadline. Logs
+show each returned structured LLM response (including correction candidates),
+cycles, actions, environment event IDs, task IDs, partition versions, location,
+wood count, discovered locations, and the final goal status. No reasoning output
+is requested. Missing configuration skips the live test and does **not** establish
+milestone success. Ordinary tests never invoke the live client. A failed live run
+is reported as evidence; there is no autonomous coaching/retry loop.
+
+The module source, checked-in binary, and rebuild command are in
+[`internal/state/wasm/testdata/gathering`](../internal/state/wasm/testdata/gathering/README.md).
+The scenario does not exercise HTTP host work or add MCP, persistence, concurrency,
+or a simulation framework.
+
+### Observed actionable-feedback rerun
+
+The unchanged live command passed after the factual completion-feedback change,
+using eight cycles and eight LLM requests. Discovery entered the partition in cycle
+1, and the next decision moved to the discovered location. By cycle 5, the recorded
+inventory held three wood. At cycle 6, the model requested completion while still
+in the forest. The evaluator rejected it with:
+
+> Completion rejected. Recorded inventory contains 3 units of wood, satisfying the requirement of at least 3. The recorded location is "forest"; the objective requires the current location to be "camp".
+
+The next decision selected a move to camp. A further completion request succeeded
+at cycle 8, with authoritative state and environment truth both showing camp and
+three wood. Partition version was 6. This records one observed live run; acceptance
+continues to check causal milestones and independently verified completion without
+requiring these cycle counts or this action sequence.
+
+The deterministic suite, `go test -race ./...`, and `go vet ./...` also passed.

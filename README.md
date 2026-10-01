@@ -92,3 +92,15 @@ go test -tags live ./internal/openai -run '^TestLive' -count=1 -v
 The application live tests cover one-cycle completion and a two-cycle
 `DRAFT` → evaluation guidance → `GRODT-7319` run. The latter supplies a test
 objective through the private application helper; no objective CLI flag exists.
+
+The stateful feedback milestone uses a real WASM partition and a tiny deterministic
+resource-gathering environment. Ordinary tests use decisions derived from the
+composed state. Run the configured LLM acceptance scenario explicitly:
+
+```sh
+go test -tags live ./cmd/grodt -run '^TestLiveStatefulFeedbackLoop$' -count=1 -v
+```
+
+It uses `config.yaml` or `GRODT_LIVE_CONFIG`, with at most 20 cycles and a two-minute
+deadline. An early `finish` requests evaluation and permits continuation when the
+goal is incomplete. See [milestone details](docs/general-state.md#stateful-feedback-milestone).

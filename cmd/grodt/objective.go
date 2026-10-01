@@ -105,10 +105,22 @@ func decodeEvaluation(data []byte) (GoalEvaluation, error) {
 	return GoalEvaluation{Achieved: *wire.Achieved, Rationale: *wire.Rationale}, nil
 }
 
+// completionEvaluator judges completion after a provider has finished its work.
+// The default remains the existing LLM evaluation; scenario hosts may verify
+// authoritative outcomes themselves. A negative evaluation always permits continuation.
+type completionEvaluator func(context.Context, openai.Client, string, string, loop.State) (GoalEvaluation, error)
+
+func runObjective(ctx context.Context, objective, initial string, providers []loop.Provider, client openai.Client, output io.Writer, status *terminalStatus, metrics *runMetrics, store *runstate.Store) error {
+	return runObjectiveWithEvaluator(ctx, objective, initial, providers, client, output, status, metrics, store, evaluate)
+}
+
 // Only valid evaluations drive continuation. Temporary guidance remains separate
 // from run state. Accepted observations and failure metadata survive failed cycles;
 // failed cycles never publish a response or retry provider errors.
-func runObjective(ctx context.Context, objective, initial string, providers []loop.Provider, client openai.Client, output io.Writer, status *terminalStatus, metrics *runMetrics, store *runstate.Store) (runErr error) {
+func runObjectiveWithEvaluator(ctx context.Context, objective, initial string, providers []loop.Provider, client openai.Client, output io.Writer, status *terminalStatus, metrics *runMetrics, store *runstate.Store, evaluator completionEvaluator) (runErr error) {
+	if evaluator == nil {
+		return errors.New("completion evaluator is required")
+	}
 	if strings.TrimSpace(objective) == "" {
 		return errors.New("run objective must not be blank")
 	}
@@ -176,7 +188,7 @@ func runObjective(ctx context.Context, objective, initial string, providers []lo
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		evaluation, err := evaluate(ctx, client, objective, initial, state)
+		evaluation, err := evaluator(ctx, client, objective, initial, state)
 		if err != nil {
 			return safeCycleError(ctx, err)
 		}

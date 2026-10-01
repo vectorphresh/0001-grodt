@@ -1,0 +1,1 @@
+{"partitions":[{"name":"gathering","schema":"schema.json","initial":"initial.json","module":"gathering.wasm","abi":"grodt.state/v1"}]}

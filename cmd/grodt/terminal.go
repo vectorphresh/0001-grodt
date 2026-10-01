@@ -128,3 +128,21 @@ func (c observedClient) finished(operation string, start time.Time, err error) e
 	}
 	return c.status.log("%s request %s after %s.", operation, outcome, time.Since(start).Round(time.Millisecond))
 }
+
+// Structured generation uses the same accounting and redacted progress channel
+// as ordinary generation. The provider owns validation/admission, not this wrapper.
+func (c observedClient) PromptWithSpecification(ctx context.Context, instructions, prompt string, input json.RawMessage, spec openai.JSONSpecification) (openai.JSONResult, error) {
+	if err := c.status.log("Structured generation request in progress..."); err != nil {
+		return openai.JSONResult{}, err
+	}
+	c.metrics.Requests++
+	start := time.Now()
+	result, err := c.Client.PromptWithSpecification(ctx, instructions, prompt, input, spec)
+	if err == nil {
+		c.metrics.add(result.Usage)
+	}
+	if logErr := c.finished("Structured generation", start, err); logErr != nil {
+		return openai.JSONResult{}, logErr
+	}
+	return result, err
+}
