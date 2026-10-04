@@ -71,13 +71,20 @@ func (s *Store) RecordAgentOutcome(ctx context.Context, result json.RawMessage, 
 	tasks.Records[t.ID] = t
 	return s.commitTasks(ctx, tasks, "agent_execution_finished", t.ID)
 }
-func (s *Store) AdmitAgentOutcome(ctx context.Context, payload json.RawMessage) (Event, error) {
+func (s *Store) AdmitAgentOutcome(ctx context.Context, result json.RawMessage) (Event, error) {
 	t, ok := s.Active()
 	if !ok || t.AgentWork == nil || t.Result == "" {
 		return Event{}, errors.New("missing agent outcome")
 	}
 	w := t.AgentWork
-	e, err := s.admit(ctx, Source{Kind: "mcp", ID: t.ID}, payload, &Correlation{OperationID: w.OperationID, Turn: w.Turn, RequestID: w.CallID})
+	if !json.Valid(result) {
+		return Event{}, errors.New("invalid agent observation result")
+	}
+	payload := encode(struct {
+		Tool   string          `json:"tool"`
+		Result json.RawMessage `json:"result"`
+	}{w.Tool, result})
+	e, err := s.admit(ctx, Source{Kind: "mcp", ID: w.Server}, payload, &Correlation{OperationID: w.OperationID, Turn: w.Turn, RequestID: w.CallID})
 	if err == nil {
 		err = s.drainHostWork(ctx)
 	}

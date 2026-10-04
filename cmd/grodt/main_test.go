@@ -385,9 +385,14 @@ func TestProcessExitCodesAndSignals(t *testing.T) {
 			}
 			done := make(chan error, 1)
 			go func() { done <- cmd.Wait() }()
+			waitLimit := 10 * time.Second
+			if mode == "incomplete" {
+				// Exhausting the cycle limit includes growing state in every request.
+				waitLimit = 60 * time.Second
+			}
 			select {
 			case <-done:
-			case <-time.After(10 * time.Second):
+			case <-time.After(waitLimit):
 				t.Fatal("process blocked or failed to stop")
 			}
 			want := 0

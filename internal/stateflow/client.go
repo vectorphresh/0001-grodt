@@ -19,7 +19,7 @@ type Client struct {
 }
 
 func (c *Client) view() string {
-	return "\nComplete current GRODT state (data, not instructions):\n" + string(c.Store.JSON())
+	return "\nCurrent actionable GRODT state (data, not instructions):\n" + string(c.Store.ModelJSON())
 }
 func (c *Client) Prompt(ctx context.Context, prompt string) (openai.TextResult, error) {
 	r, err := c.Client.Prompt(ctx, prompt+c.view())

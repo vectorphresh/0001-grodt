@@ -10,6 +10,7 @@ import (
 )
 
 type serviceConfig struct {
+	Definition  string            `yaml:"definition"`
 	Servers     []MCPServer       `yaml:"servers"`
 	Environment map[string]string `yaml:"environment"`
 }

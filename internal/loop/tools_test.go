@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -21,6 +22,38 @@ import (
 )
 
 type nativeClient func(context.Context, toolcall.Request) (toolcall.Response, error)
+
+func TestToolContinuationProjectsLatestExchange(t *testing.T) {
+	p, _ := toolsHarness(t, nil, false)
+	requests := 0
+	p.Client = nativeClient(func(_ context.Context, r toolcall.Request) (toolcall.Response, error) {
+		requests++
+		want := 1
+		if requests > 1 {
+			want = 3
+		}
+		if len(r.Messages) != want {
+			t.Fatalf("request %d retained %d messages, want %d", requests, len(r.Messages), want)
+		}
+		if requests > 1 && r.Messages[2].CallID != fmt.Sprintf("call_%d", requests-1) {
+			t.Fatal("latest result missing")
+		}
+		if strings.Contains(r.Instructions, "fixture result") || strings.Contains(r.Instructions, "agent_work") {
+			t.Fatal("task archive leaked into projection")
+		}
+		if requests == 6 {
+			return toolcall.Response{Text: "finished"}, nil
+		}
+		return toolcall.Response{Calls: []toolcall.Call{toolRequest(r, fmt.Sprintf("call_%d", requests))}}, nil
+	})
+	s := &State{Objective: "objective", Prompt: "request"}
+	if _, err := p.Handle(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	if s.Response != "finished" || len(p.Store.Snapshot().Tasks.Records) != 6 {
+		t.Fatal("response or task provenance lost")
+	}
+}
 
 func (f nativeClient) GenerateWithTools(c context.Context, r toolcall.Request) (toolcall.Response, error) {
 	return f(c, r)
@@ -141,20 +174,33 @@ func TestToolContinuationIndependentOfStateConsumption(t *testing.T) {
 					if e.Source.Kind == "mcp" && (e.Correlation == nil || e.Correlation.OperationID != operation || e.Correlation.Turn != 1) {
 						t.Fatal("missing correlation")
 					}
+					if e.Source.Kind == "mcp" {
+						task := snap.Tasks.Records[e.TaskID]
+						if e.Source.ID != "unfamiliar" || task.AgentWork == nil || task.AgentWork.CallID != e.Correlation.RequestID {
+							t.Fatal("source identity or task correlation lost")
+						}
+						var payload map[string]json.RawMessage
+						if json.Unmarshal(e.Payload, &payload) != nil || len(payload) != 2 || string(payload["tool"]) != `"lookup"` || !json.Valid(payload["result"]) {
+							t.Fatal("incorrect MCP event mapping")
+						}
+						if bytes.Contains(payload["result"], []byte(`"server"`)) {
+							t.Fatal("routing identity duplicated in result")
+						}
+					}
 				}
 			}
 			if mode == "error" && !snap.Knowledge["part0"].Metadata.Stale {
 				t.Fatal("failure not isolated")
 			}
-			// A later outer operation retains earlier native result messages.
+			// A later outer operation starts from current state, not earlier result messages.
 			if err := p.Store.BeginCycle(context.Background()); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := p.Handle(context.Background(), &State{Objective: "objective", Prompt: "again"}); err != nil {
 				t.Fatal(err)
 			}
-			if len(p.history) != 7 || p.history[2].Role != "tool" {
-				t.Fatal("history not retained across cycles")
+			if len(p.history) != 2 || p.history[0].Role != "user" {
+				t.Fatal("historical messages retained across cycles")
 			}
 		})
 	}
@@ -284,6 +330,8 @@ func TestToolFailureStopsSiblingsAndRejectsInvalidObservation(t *testing.T) {
 	})
 	if _, err := p.Handle(context.Background(), &State{Objective: "objective"}); err == nil {
 		t.Fatal("protocol failure accepted")
+	} else if err.Error() != "tool operation failed during tool invocation and result validation" {
+		t.Fatalf("missing safe failure stage: %v", err)
 	}
 	if f.Calls.Load() != 1 {
 		t.Fatal("dispatched later sibling")
@@ -292,6 +340,27 @@ func TestToolFailureStopsSiblingsAndRejectsInvalidObservation(t *testing.T) {
 		if entry.Kind == "event_admitted" && strings.Contains(string(entry.Data), `"kind":"mcp"`) {
 			t.Fatal("invalid domain observation")
 		}
+	}
+}
+
+func TestToolFailureStagePreservesCauseWithoutExposingIt(t *testing.T) {
+	p, _ := toolsHarness(t, nil, false)
+	cause := errors.New("private-provider-error")
+	p.Client = nativeClient(func(context.Context, toolcall.Request) (toolcall.Response, error) {
+		return toolcall.Response{}, cause
+	})
+	_, err := p.Handle(context.Background(), &State{Objective: "objective"})
+	if !errors.Is(err, cause) || err.Error() != "tool operation failed during model generation" {
+		t.Fatalf("unsafe or missing diagnostic: %v", err)
+	}
+	p.Client = nativeClient(func(_ context.Context, r toolcall.Request) (toolcall.Response, error) {
+		call := toolRequest(r, "one")
+		call.Arguments = json.RawMessage(`{"key":123}`)
+		return toolcall.Response{Calls: []toolcall.Call{call}}, nil
+	})
+	_, err = p.Handle(context.Background(), &State{Objective: "objective"})
+	if err == nil || err.Error() != "tool operation failed during tool call preflight" {
+		t.Fatalf("missing preflight diagnostic: %v", err)
 	}
 }
 

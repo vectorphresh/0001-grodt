@@ -14,9 +14,10 @@ import (
 )
 
 type terminalStatus struct {
-	writer io.Writer
-	trace  bool
-	key    string
+	writer    io.Writer
+	trace     bool
+	key       string
+	artifacts *inferenceTrace
 }
 
 func (s *terminalStatus) log(format string, args ...any) error {
@@ -94,7 +95,9 @@ func (c observedClient) Prompt(ctx context.Context, prompt string) (openai.TextR
 	}
 	c.metrics.Requests++
 	start := time.Now()
+	c.traceRequest("generation", map[string]any{"prompt": prompt})
 	result, err := c.Client.Prompt(ctx, prompt)
+	c.traceResponse(result, start, err)
 	if err == nil {
 		c.metrics.add(result.Usage)
 	}
@@ -114,7 +117,9 @@ func (c observedClient) RequestMutation(ctx context.Context, instructions string
 	}
 	c.metrics.Requests++
 	start := time.Now()
+	c.traceRequest("evaluation", map[string]any{"instructions": instructions, "state": state, "observation": observation, "specification": spec})
 	result, err := c.Client.RequestMutation(ctx, instructions, state, observation, spec)
+	c.traceResponse(result, start, err)
 	if err == nil {
 		c.metrics.add(result.Usage)
 	}
@@ -139,7 +144,9 @@ func (c observedClient) PromptWithSpecification(ctx context.Context, instruction
 	}
 	c.metrics.Requests++
 	start := time.Now()
+	c.traceRequest("structured-generation", map[string]any{"instructions": instructions, "prompt": prompt, "input": input, "specification": spec})
 	result, err := c.Client.PromptWithSpecification(ctx, instructions, prompt, input, spec)
+	c.traceResponse(result, start, err)
 	if err == nil {
 		c.metrics.add(result.Usage)
 	}
@@ -159,7 +166,9 @@ func (c observedClient) GenerateWithTools(ctx context.Context, request toolcall.
 	}
 	c.metrics.Requests++
 	start := time.Now()
+	c.traceRequest("tool-generation", request)
 	result, err := client.GenerateWithTools(ctx, request)
+	c.traceResponse(result, start, err)
 	if err == nil && result.UsageAvailable {
 		c.metrics.add(&openai.Usage{PromptTokens: result.PromptTokens, CompletionTokens: result.CompletionTokens, TotalTokens: result.TotalTokens})
 	}

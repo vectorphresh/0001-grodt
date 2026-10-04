@@ -32,7 +32,7 @@ func TestStructuredProviderAdmissionBoundary(t *testing.T) {
 			schema := json.RawMessage(`{"type":"object","properties":{"action":{"const":"explore"}},"required":["action"],"additionalProperties":false}`)
 			raw := structuredClient{call: func(ctx context.Context, i, p string, input json.RawMessage, spec openai.JSONSpecification) (openai.JSONResult, error) {
 				calls++
-				if p != "prompt" || !strings.Contains(string(input), `"objective":"goal"`) || !strings.Contains(string(input), `"prior context"`) || !strings.Contains(i, "Complete current GRODT state") {
+				if p != "prompt" || !strings.Contains(string(input), `"objective":"goal"`) || !strings.Contains(string(input), `"prior context"`) || !strings.Contains(i, "Current actionable GRODT state") {
 					t.Fatal("missing original inputs/state")
 				}
 				if calls > 1 && !strings.Contains(i, "Structural validation feedback") {

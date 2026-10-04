@@ -202,3 +202,13 @@ oversized output, malformed JSON, a prohibited import, bounded memory growth,
 and an invalid result envelope. `state.json`, `schema.json`, and `initial.json`
 form a runnable reference definition. This is one reference/test module, not a
 multi-language SDK or dynamic authoring toolchain.
+
+## Generic MCP tool state module
+
+`modules/mcp-tool-state/state.json` loads a generic latest-result partition using
+this unchanged v1 ABI. MCP events use `source: {"kind":"mcp","id":"<server name>"}`
+and `payload: {"tool":"<original name>","result":<accepted MCP result envelope>}`.
+The ordinary `task_id` and correlation retain invocation provenance. See the
+[module documentation](../modules/mcp-tool-state/README.md) for state shape,
+resource bounds, and the unresolved distinction between partition staleness and
+entry freshness.

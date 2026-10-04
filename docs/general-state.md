@@ -83,10 +83,18 @@ The dispatcher iterates over tasks, with no recursive callback or subscription A
 Only the owning partition is writable. Processing failures do not roll back
 successful independent partitions.
 
-`stateflow.Client` injects the complete current intrinsic/task/knowledge snapshot
+`stateflow.Client` injects a projection of current actionable state
 before every inference, including corrections and all three existing client
-methods. Original operation inputs are retained. It does not add old snapshots
-to continuation history. Existing temporary guidance remains separate. The CLI
+methods. The projection includes intrinsic counters, running/pending/waiting task summaries,
+and current partition values with freshness metadata. It excludes completed tasks,
+task inputs/results, invocation payloads, and the journal. Full snapshots and the
+journal remain available for auditing and tracing. Original operation inputs are
+retained. Prior-cycle prose and evaluation guidance are replaced each cycle and
+bounded to 4096 Unicode characters each; they are not durable knowledge. Modules
+must retain durable facts and fixed decision baselines in their current partition
+values rather than depend on replay of previous model responses. Partition values
+remain opaque to the host and should represent current world state, not an event
+archive. The CLI
 runs inference on the root; HTTP children execute host work without inference or
 continuation histories, so they do not consume agent cycles.
 

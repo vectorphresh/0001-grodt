@@ -147,6 +147,10 @@ func runObjectiveWithEvaluator(ctx context.Context, objective, initial string, p
 	defer func() {
 		if runErr != nil && outcome == "failed" {
 			rationale = "Operation failed; cycle discarded."
+			var toolErr *loop.ToolOperationError
+			if errors.As(runErr, &toolErr) {
+				rationale = toolErr.Error() + "; cycle discarded."
+			}
 		}
 		if errors.Is(runErr, context.Canceled) {
 			outcome = "cancelled"
@@ -215,14 +219,25 @@ func runObjectiveWithEvaluator(ctx context.Context, objective, initial string, p
 			outcome = "incomplete"
 			return errIncomplete
 		}
-		// Preserve relevant provider context only after successful generation/evaluation.
-		history = slices.Clone(state.Context)
+		// Replace temporary guidance. The store owns durable knowledge; responses
+		// and evaluation feedback must not become an append-only prompt archive.
+		history = nil
 		if state.Response != "" {
-			history = append(history, "Previous response:\n"+state.Response)
+			history = append(history, "Previous response:\n"+continuationText(state.Response))
 		}
-		history = append(history, "Evaluation rationale (temporary guidance):\n"+rationale)
+		history = append(history, "Evaluation rationale (temporary guidance):\n"+continuationText(rationale))
 	}
 	return errIncomplete
+}
+
+// Bound temporary prose even when a model echoes a whole state snapshot.
+func continuationText(text string) string {
+	const maxRunes = 4096
+	runes := []rune(text)
+	if len(runes) > maxRunes {
+		return string(runes[:maxRunes]) + "\n[Temporary guidance truncated; use current state for authoritative facts.]"
+	}
+	return text
 }
 
 func safeCycleError(ctx context.Context, err error) error {
@@ -233,6 +248,10 @@ func safeCycleError(ctx context.Context, err error) error {
 		if errors.Is(err, sentinel) {
 			return sentinel
 		}
+	}
+	var toolErr *loop.ToolOperationError
+	if errors.As(err, &toolErr) {
+		return fmt.Errorf("run failed; cycle discarded: %w", toolErr)
 	}
 	return errors.New("run failed; cycle discarded")
 }

@@ -8,8 +8,10 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/vectorphresh/0001-grodt/internal/config"
 	"github.com/vectorphresh/0001-grodt/internal/loop"
@@ -22,8 +24,8 @@ import (
 )
 
 const defaultObjective = "Complete the user's request using the information supplied in this run."
-const maxCycles = 20
-const usage = "usage: grodt [--trace] [--config path] [--state-definition path] [--allow-state-http] <prompt>"
+const maxCycles = 500
+const usage = "usage: grodt [--trace] [--trace-dir path] [--config path] [--state-definition path] [--allow-state-http] <prompt>"
 
 var errIncomplete = errors.New("objective incomplete: cycle limit reached")
 
@@ -52,8 +54,9 @@ func run(ctx context.Context, args []string, output, diagnostics io.Writer) erro
 	flags := flag.NewFlagSet("grodt", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	allowHTTP := flags.Bool("allow-state-http", false, "allow state modules to request HTTP work")
-	statePath := flags.String("state-definition", "", "state partition definition file")
+	statePath := flags.String("state-definition", "", "state partition definition file (overrides config)")
 	trace := flags.Bool("trace", false, "show generation and evaluation inputs")
+	traceDir := flags.String("trace-dir", "", "save inference requests, responses, and state snapshots")
 	path := flags.String("config", "config.yaml", "configuration file")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -68,6 +71,19 @@ func run(ctx context.Context, args []string, output, diagnostics io.Writer) erro
 	resolver, err := config.Load(*path)
 	if err != nil {
 		return err
+	}
+	// Explicit flags, including an empty value, override the YAML selection.
+	stateFlagSet := false
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "state-definition" {
+			stateFlagSet = true
+		}
+	})
+	if !stateFlagSet {
+		*statePath = resolver.State().Definition
+		if *statePath != "" && !filepath.IsAbs(*statePath) {
+			*statePath = filepath.Join(filepath.Dir(*path), *statePath)
+		}
 	}
 	client, key, err := clientFromResolver(resolver)
 	if err != nil {
@@ -96,6 +112,16 @@ func run(ctx context.Context, args []string, output, diagnostics io.Writer) erro
 		return errors.New("state initialization failed")
 	}
 	defer store.Close(context.Background())
+	if *traceDir != "" {
+		status.artifacts, err = newInferenceTrace(*traceDir, store, key)
+		if err != nil {
+			return err
+		}
+		if err := status.log("Trace artifacts: %s", status.artifacts.dir); err != nil {
+			return err
+		}
+		defer status.saveArtifact("final-state.json", store.JSON())
+	}
 	return executeWithCapabilities(ctx, defaultObjective, flags.Arg(0), client, output, status, store, capabilities)
 }
 
@@ -116,7 +142,17 @@ func clientFromResolver(resolver *config.Resolver) (openai.Client, string, error
 	if err != nil {
 		return nil, "", err
 	}
-	client, err := openai.NewClient(openai.Config{BaseURL: base, APIKey: key})
+	var timeout time.Duration
+	configuredTimeout, err := resolver.GetEnvironment("openai", "OPENAI_TIMEOUT")
+	if err == nil {
+		timeout, err = time.ParseDuration(configuredTimeout)
+		if err != nil || timeout <= 0 {
+			return nil, "", errors.New("OPENAI_TIMEOUT must be a positive duration, such as 10m or 300s")
+		}
+	} else if !errors.Is(err, config.ErrNotFound) {
+		return nil, "", err
+	}
+	client, err := openai.NewClient(openai.Config{BaseURL: base, APIKey: key, Timeout: timeout})
 	return client, key, err
 }
 

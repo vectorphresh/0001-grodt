@@ -8,6 +8,7 @@ var resultSchema = json.RawMessage(`{
  "type":"object", "required":["content"],
  "properties":{
   "isError":{"type":"boolean"},
+  "structuredContent":{},
   "content":{"type":"array","items":{"oneOf":[
    {"type":"object","required":["type","text"],"properties":{"type":{"const":"text"},"text":{"type":"string"}}},
    {"type":"object","required":["type","data","mimeType"],"properties":{"type":{"enum":["image","audio"]},"data":{"type":"string"},"mimeType":{"type":"string"}}},

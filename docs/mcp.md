@@ -73,8 +73,9 @@ contract operations, and completion evaluation retain their contracts. A native
 response contains final text or a batch of tool calls; text accompanying calls is
 intermediate. Each continuation is part of the originating generation operation
 and **does not start another outer agent cycle**. The next inference receives fresh
-composed State and retained native tool-call/result history. That history persists
-across outer cycles during the run.
+actionable state projection and the latest complete native tool-call/result
+exchange. Older exchanges are replaced after the next batch; outer cycles start
+a fresh native conversation. Historical payloads remain in tasks and the journal.
 
 Before creating executable tasks or dispatching any call, GRODT checks the entire
 returned batch: size, nonempty unique call IDs within the inference, known aliases,
@@ -97,20 +98,29 @@ Resource links are retained as data and never fetched. Original JSON is retained
 alongside SDK decoding to preserve large numbers and explicit null/false values.
 Wire reads and accepted results are bounded; no silent truncation occurs.
 
-The accepted outcome is retained in native continuation history and the invocation
+The accepted outcome is retained in the current native exchange and the invocation
 task **before** State admission. The normal event envelope supplies identity,
-sequence, timestamp, causal task, source `mcp`, and correlation containing
-`operation_id`, `turn`, and `request_id`. Server/tool provenance is in the payload:
+sequence, timestamp, causal task, and correlation containing `operation_id`,
+`turn`, and `request_id`. Source uses the existing object representation:
+`{"kind":"mcp","id":"example"}`, where `id` is the configured MCP server name.
+Invocation identity remains in `task_id` and correlation. The event payload is:
 
 ```json
 {
-  "server": "example",
   "tool": "lookup",
-  "content": [{"type": "text", "text": "observation"}],
-  "structuredContent": {"value": 42},
-  "isError": false
+  "result": {
+    "content": [{"type": "text", "text": "observation"}],
+    "structuredContent": {"value": 42},
+    "isError": false
+  }
 }
 ```
+
+`result` is the accepted MCP envelope. Its optional `structuredContent` accepts
+any JSON value; absence and explicit null are distinct. The generic
+[MCP tool state module](../modules/mcp-tool-state/README.md) retains the latest
+result under `sources[source.id][tool]`. Native tool continuation messages and
+invocation task outcomes retain their existing routing metadata representation.
 
 All eligible modules process the event once. Partition mutations never become new
 observations. Results remain available whether there are zero partitions or modules
@@ -139,7 +149,7 @@ new inference or dispatch.
 | --- | ---: |
 | Servers | 8 |
 | Discovery pages per server | 32 |
-| Tools across catalog | 128 |
+| Tools across catalog | 256 |
 | Serialized catalog | 1 MiB |
 | Calls per native batch | 8 |
 | MCP invocations per run | 32 |
@@ -169,7 +179,7 @@ failure isolation. They exercise a real WASM partition, continuation without
 partition mutation, sequential task lineage, and MCP-triggered HTTP chains.
 
 The separate live milestone uses the configured LLM, a harmless local MCP server
-configured entirely through YAML, and the existing reference WASM fixture:
+configured entirely through YAML, and the generic MCP tool state WASM module:
 
 ```sh
 go test -tags live ./cmd/grodt -run '^TestLiveMCPFeedbackLoop$' -count=1 -v
