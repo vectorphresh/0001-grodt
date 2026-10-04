@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"time"
 
 	"github.com/vectorphresh/0001-grodt/internal/openai"
+	"github.com/vectorphresh/0001-grodt/internal/toolcall"
 )
 
 type terminalStatus struct {
@@ -143,6 +145,26 @@ func (c observedClient) PromptWithSpecification(ctx context.Context, instruction
 	}
 	if logErr := c.finished("Structured generation", start, err); logErr != nil {
 		return openai.JSONResult{}, logErr
+	}
+	return result, err
+}
+
+func (c observedClient) GenerateWithTools(ctx context.Context, request toolcall.Request) (toolcall.Response, error) {
+	client, ok := c.Client.(toolcall.Client)
+	if !ok {
+		return toolcall.Response{}, errors.New("LLM client does not support tools")
+	}
+	if err := c.status.log("Tool-capable generation request in progress..."); err != nil {
+		return toolcall.Response{}, err
+	}
+	c.metrics.Requests++
+	start := time.Now()
+	result, err := client.GenerateWithTools(ctx, request)
+	if err == nil && result.UsageAvailable {
+		c.metrics.add(&openai.Usage{PromptTokens: result.PromptTokens, CompletionTokens: result.CompletionTokens, TotalTokens: result.TotalTokens})
+	}
+	if logErr := c.finished("Tool-capable generation", start, err); logErr != nil {
+		return toolcall.Response{}, logErr
 	}
 	return result, err
 }

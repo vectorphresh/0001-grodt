@@ -13,10 +13,12 @@ import (
 
 	"github.com/vectorphresh/0001-grodt/internal/config"
 	"github.com/vectorphresh/0001-grodt/internal/loop"
+	"github.com/vectorphresh/0001-grodt/internal/mcp"
 	"github.com/vectorphresh/0001-grodt/internal/openai"
 	runstate "github.com/vectorphresh/0001-grodt/internal/state"
 	"github.com/vectorphresh/0001-grodt/internal/state/wasm"
 	"github.com/vectorphresh/0001-grodt/internal/stateflow"
+	"github.com/vectorphresh/0001-grodt/internal/toolcall"
 )
 
 const defaultObjective = "Complete the user's request using the information supplied in this run."
@@ -63,15 +65,30 @@ func run(ctx context.Context, args []string, output, diagnostics io.Writer) erro
 	if flags.NArg() != 1 || strings.TrimSpace(flags.Arg(0)) == "" {
 		return errors.New(usage)
 	}
-	client, key, err := configuredClient(*path)
+	resolver, err := config.Load(*path)
+	if err != nil {
+		return err
+	}
+	client, key, err := clientFromResolver(resolver)
 	if err != nil {
 		return err
 	}
 	status := &terminalStatus{writer: diagnostics, trace: *trace, key: key}
-	if *statePath == "" {
-		return execute(ctx, defaultObjective, flags.Arg(0), client, output, status)
+	cfg := resolver.MCP()
+	var capabilities *mcp.Runtime
+	if len(cfg.Servers) > 0 {
+		capabilities, err = mcp.New(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		defer capabilities.Close()
 	}
-	store, err := wasm.Load(ctx, *statePath, runstate.Options{AllowHTTP: *allowHTTP})
+	var store *runstate.Store
+	if *statePath == "" {
+		store, err = runstate.New(ctx, nil, runstate.Options{AllowHTTP: *allowHTTP})
+	} else {
+		store, err = wasm.Load(ctx, *statePath, runstate.Options{AllowHTTP: *allowHTTP})
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -79,7 +96,7 @@ func run(ctx context.Context, args []string, output, diagnostics io.Writer) erro
 		return errors.New("state initialization failed")
 	}
 	defer store.Close(context.Background())
-	return executeWithState(ctx, defaultObjective, flags.Arg(0), client, output, status, store)
+	return executeWithCapabilities(ctx, defaultObjective, flags.Arg(0), client, output, status, store, capabilities)
 }
 
 func configuredClient(path string) (openai.Client, string, error) {
@@ -87,6 +104,10 @@ func configuredClient(path string) (openai.Client, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
+	return clientFromResolver(resolver)
+}
+
+func clientFromResolver(resolver *config.Resolver) (openai.Client, string, error) {
 	base, err := resolver.GetEnvironment("openai", "OPENAI_BASE_URL")
 	if err != nil {
 		return nil, "", err
@@ -110,9 +131,18 @@ func execute(ctx context.Context, objective, initial string, client openai.Clien
 }
 
 func executeWithState(ctx context.Context, objective, initial string, client openai.Client, output io.Writer, status *terminalStatus, store *runstate.Store) error {
+	return executeWithCapabilities(ctx, objective, initial, client, output, status, store, nil)
+}
+func executeWithCapabilities(ctx context.Context, objective, initial string, client openai.Client, output io.Writer, status *terminalStatus, store *runstate.Store, capabilities *mcp.Runtime) error {
 	metrics := runMetrics{}
 	observed := observedClient{Client: client, status: status, metrics: &metrics}
 	withState := &stateflow.Client{Client: observed, Store: store}
 	providers := []loop.Provider{loop.NewGenericProvider(withState)}
+	if capabilities != nil {
+		if _, ok := client.(toolcall.Client); !ok {
+			return errors.New("LLM client does not support tools")
+		}
+		providers = []loop.Provider{&loop.ToolProvider{Client: observed, Observer: withState, Runtime: capabilities, Store: store}}
+	}
 	return runObjective(ctx, objective, initial, providers, withState, output, status, &metrics, store)
 }

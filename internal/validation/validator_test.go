@@ -247,7 +247,9 @@ func TestInputsRemainUnchanged(t *testing.T) {
 }
 
 func TestContext(t *testing.T) {
-	if _, err := New().Validate(nil, nil, nil); err == nil {
+	// The zero-value context is intentional: verify rejection at the public boundary.
+	var missingContext context.Context
+	if _, err := New().Validate(missingContext, nil, nil); err == nil {
 		t.Fatal("nil context accepted")
 	}
 	ctx, cancel := context.WithCancel(context.Background())

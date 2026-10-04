@@ -36,6 +36,7 @@ type TaskState struct {
 }
 type Task struct {
 	Order      uint64     `json:"order"`
+	AgentWork  *AgentWork `json:"agent_work,omitempty"`
 	Work       *HostWork  `json:"work,omitempty"`
 	ID         string     `json:"id"`
 	ParentID   string     `json:"parent_id,omitempty"`
@@ -82,8 +83,10 @@ type HostWork struct {
 	Request   HostRequest `json:"request"`
 }
 type Correlation struct {
-	Partition string `json:"partition"`
-	RequestID string `json:"request_id"`
+	Partition   string `json:"partition,omitempty"`
+	RequestID   string `json:"request_id"`
+	OperationID string `json:"operation_id,omitempty"`
+	Turn        uint64 `json:"turn,omitempty"`
 }
 type Event struct {
 	TaskID      string          `json:"task_id,omitempty"`
@@ -121,3 +124,13 @@ type Definition struct {
 type RuntimeError struct{ Code string }
 
 func (e *RuntimeError) Error() string { return "state module execution failed: " + e.Code }
+
+// AgentWork is assigned only by the reasoning loop, never by module results.
+type AgentWork struct {
+	OperationID string          `json:"operation_id"`
+	Turn        uint64          `json:"turn"`
+	CallID      string          `json:"call_id"`
+	Server      string          `json:"server"`
+	Tool        string          `json:"tool"`
+	Arguments   json.RawMessage `json:"arguments"`
+}

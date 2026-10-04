@@ -87,6 +87,43 @@
               "request"
             ],
             "additionalProperties": false
+          },
+          "agent_work": {
+            "type": "object",
+            "properties": {
+              "operation_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "turn": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "call_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "server": {
+                "type": "string",
+                "minLength": 1
+              },
+              "tool": {
+                "type": "string",
+                "minLength": 1
+              },
+              "arguments": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "operation_id",
+              "turn",
+              "call_id",
+              "server",
+              "tool",
+              "arguments"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [

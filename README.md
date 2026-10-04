@@ -26,7 +26,7 @@ The stable application objective is: "Complete the user's request using the
 information supplied in this run." It is separate from the initial request and
 temporary context. Providers do not own or change this objective.
 
-Each cycle performs two synchronous LLM calls:
+With no MCP servers configured, each cycle performs two synchronous LLM calls:
 
 1. `Prompt` generates the current answer through `GenericProvider`.
 2. `RequestMutation` evaluates the original objective/request against current
@@ -39,14 +39,17 @@ A failed generation skips evaluation; a terminally invalid evaluation cannot
 trigger continuation. Schema-invalid JSON allows at most two corrective inferences;
 provider failures and malformed JSON are terminal. There are no detached operations.
 
-The private limit is **20 cycles** (normally 40 calls, at most 80 with evaluation corrections). This is an
+The private limit is **20 cycles** (without MCP, normally 40 calls, at most 80 with evaluation corrections). This is an
 execution guard, not a retry count. Temporary context can grow across those
 cycles. Run-owned in-memory state now tracks intrinsic facts, a root task, and
 optional WASM-owned knowledge partitions. Every inference receives complete current
 state; only accepted operation results reach modules. Modules can request bounded
 HTTP work as sequential child tasks when `--allow-state-http` is explicitly set.
-HTTP is disabled by default. No task planner, MCP integration, persistence, or
-dynamic module authoring is implemented.
+HTTP is disabled by default. Optional configured MCP tools are available to agent
+generation, with native continuations inside the same outer cycle and a separate
+32-invocation run budget. MCP observations use the existing State admission path.
+No task planner, persistence, or dynamic module authoring is implemented.
+See [MCP configuration, boundaries, and live acceptance](docs/mcp.md).
 See [general state](docs/general-state.md) and the [module ABI](docs/state-module-abi.md).
 
 Final response goes to stdout. Progress, objective, status, rationale, and metrics

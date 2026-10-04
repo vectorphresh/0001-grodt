@@ -158,7 +158,7 @@ func (s *Store) admit(ctx context.Context, source Source, payload json.RawMessag
 	if s.hostExhausted {
 		return Event{}, ErrHostBudget
 	}
-	if source.ID == "" || (source.Kind != "user" && source.Kind != "llm" && source.Kind != "runtime" && source.Kind != "http") {
+	if source.ID == "" || (source.Kind != "user" && source.Kind != "llm" && source.Kind != "runtime" && source.Kind != "http" && source.Kind != "mcp") {
 		return Event{}, errors.New("invalid event source")
 	}
 	if !json.Valid(payload) || len(payload) > MaxValueBytes {

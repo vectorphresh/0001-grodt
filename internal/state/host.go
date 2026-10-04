@@ -94,7 +94,7 @@ func (s *Store) drainHostWork(ctx context.Context) error {
 		if !ok {
 			return nil
 		}
-		if child, ok := s.pendingChild(active.ID); ok {
+		if child, ok := s.pendingChild(active.ID); ok && child.Work != nil {
 			if err := s.activate(ctx, child.ID); err != nil {
 				return err
 			}
