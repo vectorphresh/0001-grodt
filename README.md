@@ -53,15 +53,19 @@ trigger continuation. Schema-invalid JSON allows at most two corrective inferenc
 provider failures and malformed JSON are terminal. There are no detached operations.
 
 The private limit is **500 cycles** (without MCP, normally 1000 calls, at most 2000 with evaluation corrections). This is an
-execution guard, not a retry count. Temporary context can grow across those
+execution guard, not a retry count. Temporary guidance is replaced and bounded across those
 cycles. Run-owned in-memory state now tracks intrinsic facts, a root task, and
-optional WASM-owned knowledge partitions. Every inference receives complete current
+optional WASM-owned knowledge partitions. Every inference receives a projection of actionable current
 state; only accepted operation results reach modules. Modules can request bounded
 HTTP work as sequential child tasks when `--allow-state-http` is explicitly set.
 HTTP is disabled by default. Optional configured MCP tools are available to agent
 generation, with native continuations inside the same outer cycle and a separate
 32-invocation run budget. MCP observations use the existing State admission path.
-No task planner, persistence, or dynamic module authoring is implemented.
+Native actors can author bounded task plans with ordered steps, accepted evidence
+references and separately evaluated outcomes. Prior revisions remain in the
+journal. Accepted external activity also triggers a bounded progress reconciliation
+checkpoint, so continuity does not depend solely on voluntary planning calls.
+Disk recovery and dynamic module authoring are not implemented.
 See [MCP configuration, boundaries, and live acceptance](docs/mcp.md).
 Use the [generic MCP tool state module](modules/mcp-tool-state/README.md) to retain
 the latest admitted result per source/tool across inferences. The default
@@ -84,7 +88,10 @@ Exit codes:
 On the cycle limit, the last successfully evaluated response/rationale is
 reported. Failed cycles never publish partial responses or infer completion.
 SIGINT/SIGTERM cancel the active request. Each LLM request defaults to a two-minute
-timeout. Set `openai.environment.OPENAI_TIMEOUT` in YAML or `OPENAI_TIMEOUT` in the
+timeout. Optionally set `openai.environment.OPENAI_MODEL` in YAML or `OPENAI_MODEL`
+in the environment to send a model name on every LLM request. Missing or blank
+values omit the model parameter and let the endpoint select its default.
+Set `openai.environment.OPENAI_TIMEOUT` in YAML or `OPENAI_TIMEOUT` in the
 process environment to a positive Go duration such as `10m` or `300s`; YAML takes
 precedence. The supplied `config.yaml` uses `10m`. This applies to generation,
 tool continuations, and evaluation; there is no additional whole-run timeout.

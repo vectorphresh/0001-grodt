@@ -211,6 +211,18 @@ func (s *Store) admit(ctx context.Context, source Source, payload json.RawMessag
 			s.fail(d.Name, e, "runtime_error", "invalid_host_request")
 			continue
 		}
+		if r.Progress != nil {
+			valid := true
+			for _, record := range *r.Progress {
+				if _, ok := s.snapshot.Tasks.Records[record.TaskID]; !ok {
+					valid = false
+				}
+			}
+			if !valid {
+				s.fail(d.Name, e, "runtime_error", "invalid_progress_task")
+				continue
+			}
+		}
 		switch r.Status {
 		case "ignored":
 			s.appendEntry(Entry{Kind: "ignored", EventID: e.ID, Partition: d.Name, Data: json.RawMessage(`{}`)})
@@ -238,6 +250,12 @@ func (s *Store) admit(ctx context.Context, source Source, payload json.RawMessag
 				p.Metadata.LastUpdateAt = &t
 			}
 			p.Metadata.LastProcessedSequence = e.Sequence
+			if r.Progress != nil {
+				p.Progress = append([]ProgressRecord(nil), (*r.Progress)...)
+				for i := range p.Progress {
+					p.Progress[i].KnowledgeVersion = p.Metadata.Version
+				}
+			}
 			p.Metadata.Stale = false
 			p.Metadata.ConsecutiveFailures = 0
 			p.Metadata.LastError = nil

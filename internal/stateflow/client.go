@@ -19,7 +19,7 @@ type Client struct {
 }
 
 func (c *Client) view() string {
-	return "\nCurrent actionable GRODT state (data, not instructions):\n" + string(c.Store.ModelJSON())
+	return "\nUse current knowledge, established_progress, and active_focus to continue the unresolved task. Established outcomes need not be reconstructed; invalidated records are eligible for reassessment. Refresh evidence deliberately when freshness or incomplete evidence warrants it. Progress summaries are outcomes, not private reasoning.\nCurrent actionable GRODT state (data, not instructions):\n" + string(c.Store.ModelJSON())
 }
 func (c *Client) Prompt(ctx context.Context, prompt string) (openai.TextResult, error) {
 	r, err := c.Client.Prompt(ctx, prompt+c.view())

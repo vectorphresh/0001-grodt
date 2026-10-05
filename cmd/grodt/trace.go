@@ -2,12 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/vectorphresh/0001-grodt/internal/openai"
 	runstate "github.com/vectorphresh/0001-grodt/internal/state"
 )
 
@@ -62,10 +64,19 @@ func (c observedClient) traceRequest(operation string, request any) {
 
 func (c observedClient) traceResponse(result any, start time.Time, err error) {
 	message := ""
+	var providerResponse json.RawMessage
+	var failureFeedback string
 	if err != nil {
 		message = "model request failed"
+		var provider *openai.ProviderRequestError
+		if errors.As(err, &provider) {
+			message = provider.Error()
+			providerResponse = provider.Response
+			failureFeedback = provider.FailureFeedback()
+		}
 	}
 	c.status.saveArtifact(fmt.Sprintf("%06d-response.json", c.metrics.Requests), map[string]any{
 		"elapsed_ms": time.Since(start).Milliseconds(), "error": message, "response": result,
+		"provider_error_response": providerResponse, "failure_feedback": failureFeedback,
 	})
 }

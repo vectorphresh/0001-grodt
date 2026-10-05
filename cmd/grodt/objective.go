@@ -210,7 +210,7 @@ func runObjectiveWithEvaluator(ctx context.Context, objective, initial string, p
 				}
 			}
 			if evaluation.Achieved {
-				if err := store.Complete(ctx, state.Response); err != nil {
+				if err := store.CompleteObjective(ctx, state.Response); err != nil {
 					return err
 				}
 				outcome = "achieved"

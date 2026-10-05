@@ -152,7 +152,11 @@ func clientFromResolver(resolver *config.Resolver) (openai.Client, string, error
 	} else if !errors.Is(err, config.ErrNotFound) {
 		return nil, "", err
 	}
-	client, err := openai.NewClient(openai.Config{BaseURL: base, APIKey: key, Timeout: timeout})
+	model, err := resolver.GetEnvironment("openai", "OPENAI_MODEL")
+	if err != nil && !errors.Is(err, config.ErrNotFound) {
+		return nil, "", err
+	}
+	client, err := openai.NewClient(openai.Config{BaseURL: base, APIKey: key, Model: model, Timeout: timeout})
 	return client, key, err
 }
 
@@ -178,7 +182,7 @@ func executeWithCapabilities(ctx context.Context, objective, initial string, cli
 		if _, ok := client.(toolcall.Client); !ok {
 			return errors.New("LLM client does not support tools")
 		}
-		providers = []loop.Provider{&loop.ToolProvider{Client: observed, Observer: withState, Runtime: capabilities, Store: store}}
+		providers = []loop.Provider{&loop.ToolProvider{Client: observed, Observer: withState, Evaluator: observed, Reconciler: observed, Runtime: capabilities, Store: store}}
 	}
 	return runObjective(ctx, objective, initial, providers, withState, output, status, &metrics, store)
 }

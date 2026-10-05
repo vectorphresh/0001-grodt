@@ -1,0 +1,184 @@
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "enum": [
+        "revise",
+        "create_child",
+        "complete_child",
+        "abandon_child"
+      ]
+    },
+    "plan": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "completion_criteria": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "active",
+            "partial",
+            "satisfied",
+            "invalidated",
+            "failed"
+          ]
+        },
+        "outcome": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "partition": {
+                "type": "string",
+                "minLength": 1
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "path": {
+                "type": "string",
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "partition",
+              "version",
+              "path"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 8
+        },
+        "information_gaps": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 512,
+            "minLength": 1
+          },
+          "maxItems": 8
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "description": {
+                "type": "string",
+                "maxLength": 512,
+                "minLength": 1
+              },
+              "completion_criteria": {
+                "type": "string",
+                "maxLength": 512
+              },
+              "status": {
+                "enum": [
+                  "pending",
+                  "active",
+                  "partial",
+                  "satisfied",
+                  "invalidated",
+                  "failed"
+                ]
+              },
+              "outcome": {
+                "type": "string",
+                "maxLength": 512
+              },
+              "evidence_refs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "partition": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "path": {
+                      "type": "string",
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "partition",
+                    "version",
+                    "path"
+                  ],
+                  "additionalProperties": false
+                },
+                "maxItems": 8
+              },
+              "information_gaps": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 512,
+                  "minLength": 1
+                },
+                "maxItems": 8
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": [
+              "id",
+              "description",
+              "status"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 32
+        },
+        "current_step": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "description",
+        "status",
+        "revision",
+        "steps"
+      ],
+      "additionalProperties": false
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "completion_criteria": {
+      "type": "string",
+      "maxLength": 512
+    }
+  },
+  "required": [
+    "action"
+  ],
+  "additionalProperties": false
+}

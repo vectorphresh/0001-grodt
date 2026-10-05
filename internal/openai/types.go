@@ -15,6 +15,8 @@ type Config struct {
 	BaseURL string
 	// APIKey is required and must not be blank. It is sent as a bearer credential.
 	APIKey string
+	// Model is optional. Blank selects the endpoint's default model.
+	Model string
 	// Timeout bounds an entire interaction. Zero selects two minutes; negative
 	// values are invalid. An earlier caller deadline always takes precedence.
 	Timeout time.Duration

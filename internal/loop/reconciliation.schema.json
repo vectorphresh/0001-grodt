@@ -1,0 +1,118 @@
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "enum": [
+        "no_progress",
+        "progress"
+      ]
+    },
+    "updates": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "properties": {
+          "step": {
+            "type": "object",
+            "properties": {
+              "description": {
+                "type": "string",
+                "maxLength": 512,
+                "minLength": 1
+              },
+              "completion_criteria": {
+                "type": "string",
+                "maxLength": 512
+              },
+              "status": {
+                "enum": [
+                  "pending",
+                  "active",
+                  "partial",
+                  "satisfied",
+                  "invalidated",
+                  "failed"
+                ]
+              },
+              "outcome": {
+                "type": "string",
+                "maxLength": 512
+              },
+              "evidence_refs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "partition": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "path": {
+                      "type": "string",
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "partition",
+                    "version",
+                    "path"
+                  ],
+                  "additionalProperties": false
+                },
+                "maxItems": 8
+              },
+              "information_gaps": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 512,
+                  "minLength": 1
+                },
+                "maxItems": 8
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": [
+              "description",
+              "completion_criteria",
+              "status",
+              "outcome",
+              "evidence_refs",
+              "information_gaps",
+              "id"
+            ],
+            "additionalProperties": false
+          },
+          "intent_quote": {
+            "type": "string",
+            "maxLength": 512
+          }
+        },
+        "required": [
+          "step",
+          "intent_quote"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "current_step": {
+      "type": "string",
+      "maxLength": 64
+    }
+  },
+  "required": [
+    "action",
+    "updates",
+    "current_step"
+  ],
+  "additionalProperties": false
+}

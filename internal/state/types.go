@@ -35,6 +35,7 @@ type TaskState struct {
 	Stack   []string        `json:"stack"`
 }
 type Task struct {
+	Plan       *Plan      `json:"plan,omitempty"`
 	Order      uint64     `json:"order"`
 	AgentWork  *AgentWork `json:"agent_work,omitempty"`
 	Work       *HostWork  `json:"work,omitempty"`
@@ -51,8 +52,21 @@ type Task struct {
 	Error      string     `json:"error,omitempty"`
 }
 type Partition struct {
-	Metadata Metadata        `json:"metadata"`
-	Value    json.RawMessage `json:"value"`
+	Metadata Metadata         `json:"metadata"`
+	Value    json.RawMessage  `json:"value"`
+	Progress []ProgressRecord `json:"progress,omitempty"`
+}
+
+// ProgressRecord contains a declared outcome, never private reasoning or raw
+// execution payloads. The producing module owns its meaning and task scope.
+type ProgressRecord struct {
+	ID               string `json:"id"`
+	TaskID           string `json:"task_id"`
+	Kind             string `json:"kind"`   // conclusion, completed_step, or focus
+	Status           string `json:"status"` // established, unresolved, or invalidated
+	Summary          string `json:"summary"`
+	FactReference    string `json:"fact_reference,omitempty"` // JSON pointer into the owner's value
+	KnowledgeVersion uint64 `json:"knowledge_version"`        // host stamped on acceptance
 }
 type Metadata struct {
 	Version               uint64     `json:"version"`

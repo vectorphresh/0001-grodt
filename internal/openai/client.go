@@ -23,7 +23,7 @@ var _ Client = (*client)(nil)
 
 // NewClient validates configuration without contacting the endpoint. It owns an
 // HTTP client and transport, injected into the SDK solely as a protocol binding.
-// SDK retries are disabled and the model field is omitted for endpoint selection.
+// SDK retries are disabled; an omitted model allows endpoint selection.
 func NewClient(config Config) (Client, error) {
 	u, err := url.Parse(config.BaseURL)
 	if err != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.Opaque != "" {
@@ -54,12 +54,16 @@ func NewClient(config Config) (Client, error) {
 		transport = base.Clone()
 	}
 	httpClient := &http.Client{Transport: transport} // Timeout deliberately zero.
+	modelOption := option.WithJSONDel("model")
+	if model := strings.TrimSpace(config.Model); model != "" {
+		modelOption = option.WithJSONSet("model", model)
+	}
 	service := sdk.NewChatCompletionService(
 		option.WithHTTPClient(httpClient),
 		option.WithBaseURL(strings.TrimRight(u.String(), "/")+"/"),
 		option.WithAPIKey(config.APIKey),
 		option.WithMaxRetries(0),
-		option.WithJSONDel("model"),
+		modelOption,
 	)
 	return &client{service: service, timeout: config.Timeout}, nil
 }
@@ -146,6 +150,24 @@ func (c *client) complete(ctx context.Context, params sdk.ChatCompletionNewParam
 
 // Preserve context classification, but never retain an SDK error (which can hold
 // credentials and provider bodies) in the public error chain.
+// ProviderRequestError exposes only host-selected HTTP diagnostics, never the
+// provider body (which may echo credentials or whole request payloads).
+type ProviderRequestError struct {
+	StatusCode int
+	// Response is diagnostic data for trace artifacts, never model feedback.
+	Response json.RawMessage
+}
+
+func (e *ProviderRequestError) Error() string {
+	return fmt.Sprintf("openai: provider request failed (HTTP %d)", e.StatusCode)
+}
+func (e *ProviderRequestError) FailureFeedback() string {
+	if e.StatusCode == 400 || e.StatusCode == 422 || e.StatusCode == 429 || e.StatusCode >= 500 {
+		return fmt.Sprintf("The previous model request failed with HTTP %d. No tool calls from that request executed. Reassess the request and use the advertised native tools; do not assume missing results or repeat external effects blindly.", e.StatusCode)
+	}
+	return ""
+}
+
 func requestError(err error) error {
 	for _, sentinel := range []error{context.Canceled, context.DeadlineExceeded} {
 		if errors.Is(err, sentinel) {
@@ -154,7 +176,11 @@ func requestError(err error) error {
 	}
 	var provider *sdk.Error
 	if errors.As(err, &provider) {
-		return fmt.Errorf("openai: provider request failed (HTTP %d)", provider.StatusCode)
+		var response json.RawMessage
+		if raw := provider.RawJSON(); json.Valid([]byte(raw)) {
+			response = json.RawMessage(raw)
+		}
+		return &ProviderRequestError{StatusCode: provider.StatusCode, Response: response}
 	}
 	return errors.New("openai: request or response processing failed")
 }

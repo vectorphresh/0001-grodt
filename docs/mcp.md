@@ -68,6 +68,17 @@ server's original name. Descriptions and schemas are data, not instruction autho
 
 ## Execution and observation
 
+Catalogs with more than 128 tools use model-visible pages of 126 MCP tools plus
+`grodt_manage_plan` and `grodt_select_tool_page`. The planning tool stays callable
+on every page. A compact page index names every discovered tool; the
+model selects a page to see its schemas and invoke its tools. Selection must be
+called alone and performs no external operation. Tool aliases stay stable and
+all discovered tools remain accessible. Smaller catalogs are sent without paging. The local `grodt_manage_plan` tool
+persists actor-authored intent and evaluated procedural outcomes; see
+[task planning](general-state.md#model-authored-plans).
+The selected page persists across cycles; navigation is limited to 32 selections
+per generation and does not consume the MCP invocation budget.
+
 Only agent generation receives native tools. Existing structured generation,
 contract operations, and completion evaluation retain their contracts. A native
 response contains final text or a batch of tool calls; text accompanying calls is
@@ -81,8 +92,18 @@ Before creating executable tasks or dispatching any call, GRODT checks the entir
 returned batch: size, nonempty unique call IDs within the inference, known aliases,
 argument JSON syntax and advertised schema, byte limits, and remaining run budget.
 If a batch does not fit, **none of its calls execute**. For example, a batch of three
-with two remaining invocations fails before dispatch. Invalid arguments terminate
-the generation; they do not enter structural correction or syntactic JSON repair.
+with two remaining invocations fails before dispatch. Other invalid batches receive
+host-authored validation feedback so the model can return corrected native calls.
+No rejected call executes. Correction does not parse or repair argument JSON.
+
+Generation allows at most two failure corrections per operation. Tool markup
+printed as text receives feedback that no tool executed and native tool calls are
+required. Recoverable model HTTP failures (400, 422, 429, and 5xx) receive safe
+status feedback; provider bodies are not copied into prompts or traces. Native
+call/result pairs remain intact while correction feedback is replaced. Cancellation,
+timeouts, authentication failures, sensitive-value rejection, exhausted invocation
+budgets, and MCP protocol/transport failures remain terminal. Tool `isError` results
+retain the server's accepted error message and continue to the next inference.
 
 Calls become pending sibling tasks beneath the causal reasoning task and execute
 sequentially. Agent invocation metadata is separate from module `HostWork`. Each

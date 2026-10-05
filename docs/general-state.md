@@ -29,15 +29,16 @@ domain value and an event.
 
 Task records form a tree through canonical `parent_id` relationships. A parent
 can have multiple children. `tasks.stack` is only the currently active lineage;
-completed children remain in `tasks.records`. `Push` is an explicit host operation,
+completed children remain in `tasks.records`. `Push` is a host operation (also available through the validated planning tool),
 `Complete` pops the active task and resumes its parent, and `End` terminates the
 remaining lineage and pending work. Every proposed task-state document passes the existing JSON
-Schema validator before commit. The host alone assigns IDs, status, timing, and
-cycle counters.
+Schema validator before commit. The host assigns task IDs, execution status, timing, and cycle counters.
+The actor proposes separate semantic plan and step statuses.
 
 The CLI creates one root from the run objective and stores the initial request
 as its input. Modules may request HTTP work, which the host creates as child tasks;
-goal evaluation has no task-planning field. Pending tasks have creation order and
+native actors may create reasoning children with the local planning tool.
+Goal evaluation remains separate from procedural completion. Pending tasks have creation order and
 no start time; activation adds them to the active lineage and records start time.
 The global 20-cycle limit is unchanged. Structural correction retains its separate
 three-attempt limit. Ordinary provider failures still abort; module processing
@@ -86,17 +87,135 @@ successful independent partitions.
 `stateflow.Client` injects a projection of current actionable state
 before every inference, including corrections and all three existing client
 methods. The projection includes intrinsic counters, running/pending/waiting task summaries,
-and current partition values with freshness metadata. It excludes completed tasks,
+and current partition values with freshness metadata. Active task plans and compact
+completed reasoning children of the active lineage are included. It excludes completed execution tasks,
 task inputs/results, invocation payloads, and the journal. Full snapshots and the
 journal remain available for auditing and tracing. Original operation inputs are
 retained. Prior-cycle prose and evaluation guidance are replaced each cycle and
 bounded to 4096 Unicode characters each; they are not durable knowledge. Modules
 must retain durable facts and fixed decision baselines in their current partition
-values rather than depend on replay of previous model responses. Partition values
+values rather than depend on replay of previous model responses. Modules may emit
+bounded `progress` records alongside accepted processing or mutations to declare
+established conclusions, completed requirements, and unresolved focus. The model
+receives task-relevant `established_progress` and `active_focus` separately from
+current knowledge. Records replace prior progress rather than append per cycle;
+stale knowledge or a changed knowledge version makes earlier outcomes eligible
+for reassessment. See the [module ABI](state-module-abi.md) for fields and limits.
+The host never derives these outcomes from tool names or task payloads. Partition values
 remain opaque to the host and should represent current world state, not an event
 archive. The CLI
-runs inference on the root; HTTP children execute host work without inference or
+runs inference with the active reasoning lineage; HTTP children execute host work without inference or
 continuation histories, so they do not consume agent cycles.
+
+## Model-authored plans
+
+Native actors receive `grodt_manage_plan`, a local tool that executes no MCP
+operation and consumes no MCP invocation budget. Its actions are `revise`,
+`create_child`, `complete_child`, and `abandon_child`. Each call must be alone.
+Plans are optional: the runtime neither invents steps nor chooses a strategy.
+
+A task's `plan` records a description, optional natural-language completion
+criteria, ordered steps, current step, concise outcome, evidence references and
+information gaps. Plan and step statuses are `pending`, `active`, `partial`,
+`satisfied`, `invalidated`, or `failed`; execution-task status stays separate.
+Descriptions, criteria, outcomes and individual gaps are limited to 512 bytes.
+Plans have at most 32 steps; each plan/step has at most eight evidence references
+and eight gaps. There are at most 64 model-planned tasks, eight active lineage
+levels and 32 local plan calls per generation. No updates are required per cycle.
+
+`revise` supplies the entire current plan with its existing `revision` (zero for
+an initial plan). The host checks the revision and increments it on acceptance.
+Pending or partial steps may be added, removed, replaced or reordered. Satisfied
+and invalidated steps cannot be removed or have their established content
+rewritten. Explicit invalidation preserves their criteria, outcome and evidence;
+reassessment uses a new step. A satisfied plan follows the same preservation
+rule; a new child can represent subsequent intent. Every accepted revision is
+journaled, so superseded plan bodies never need to appear in normal requests.
+
+Evidence has the form `{"partition":"world","version":1,"path":"/setting"}`.
+The path is a JSON pointer into module-owned state; an empty path selects the
+whole value. New references must resolve at the named current version of a
+non-stale partition. A tool invocation, unaccepted result or invented pointer
+cannot establish evidence. Referenced values retain JSON numeric precision.
+Version-zero references may point into validated initial partition state.
+
+New satisfaction claims require an outcome, evidence and no remaining gaps.
+The separate LLM evaluator receives the claims, criteria and resolved accepted
+evidence, and returns a bounded boolean decision and concise rationale. It
+judges whether the evidence supports the intent, without prescribing strategy.
+All new claims in a proposal are evaluated together. Rejection retains those
+claims as partial with an information gap; malformed proposals leave the plan
+unchanged. Evaluator requests/responses use the existing trace and usage path;
+accepted decisions and their evidence are journaled. An evaluator unavailable
+at the planning boundary cannot approve satisfaction. Planning claims never
+mutate knowledge or substitute for the root objective evaluator.
+
+Projected plans retain satisfied outcomes across cycles, even when newer
+observations supersede their original evidence. `evidence_state` reports
+`current`, `superseded`, `stale`, or `missing` against current partition metadata.
+Superseding an observation does not mechanically invalidate a historical
+conclusion: the actor decides whether its intent requires reassessment. This
+permits both fixed reference observations and later retrievals of changing facts.
+There is no duplicate-call suppression. Monitoring and waiting are legitimate
+unresolved intents and do not require immediate external execution.
+
+A completed child resumes its parent and retains its compact plan in the parent's
+projection. Abandoning a child records incomplete execution rather than semantic
+satisfaction. Only the independent root evaluator may end the objective; if it
+confirms success while children remain unresolved, those children end incomplete.
+All full inputs, execution payloads, evaluations and prior revisions remain
+available in the snapshot/journal or trace rather than recursive model context.
+
+## Automatic procedural reconciliation
+
+Native-tool runs reconcile progress after each completed external invocation batch,
+after module acceptance and before the next ordinary actor inference. The actor
+need not call `grodt_manage_plan` first. The checkpoint asks what the completed
+activity established; planning still asks what to pursue, and root evaluation
+still asks whether the objective is complete. The same configured client performs
+all three operations; no new model or provider configuration is required.
+
+The structured `progress_reconciliation` request uses the observed client directly,
+without `stateflow.Client` full-state injection. It contains bounded active intent
+and lineage, relevant current plan steps, the latest public actor intent, invocation
+names, and small resolved values from accepted partition changes. Unchanged
+partitions, the tool catalog, journal, superseded plans and conversation history
+are excluded. References from established steps may also be resolved at a new
+accepted version to support an intentional refresh whose value stayed the same.
+Older references retain explicit current/superseded/stale/missing metadata.
+
+Reconciliation input data and candidate outputs are limited to 64 KiB each. The original request
+is clipped to 8 KiB, actor intent to 4 KiB, relevant plan content to 24 KiB, and
+accepted evidence to 64 references of at most 4 KiB each, within the overall input
+limit. JSON numbers retain their precision. Evidence selection reports truncation;
+the reconciler must not invent missing evidence. It emits at most eight step
+updates and an optional current-step change, rather than replacing task state.
+A new step requires an exact quote from the latest actor intent; the runtime
+validates that provenance while the model interprets its semantic meaning.
+
+An explicit `no_progress` result changes no plan and creates no synthetic steps.
+Partial updates can record missing information. New satisfaction proposals use
+exactly the shared completion evaluator used by deliberate planning, with accepted
+evidence and no remaining gaps; rejection retains partial progress. All proposals
+pass revision, evidence and completed-history preservation checks before commit.
+Identical plans are not revised. Neither reconciliation nor evaluation admits
+world-state mutations or recursively triggers another checkpoint. Repeated
+retrieval remains allowed and does not erase fixed historical observations.
+
+The existing structured correction limit applies to schema-invalid responses.
+Provider failures, malformed JSON, oversized candidates and invalid semantic
+updates fail the generation according to existing provider-failure policy, while
+accepted domain state and earlier plans remain intact. No progress is fabricated
+as a fallback. Request/response bodies and usage use the existing trace/accounting
+path; `procedural_reconciliation` journal entries retain considered evidence,
+proposed updates and failure codes, alongside completion decisions and revisions.
+These audit bodies never enter subsequent actor projections.
+
+Reconciliation performs no MCP invocations and uses no invocation budget. It
+records evidence-backed procedural meaning rather than interpreting domain
+formulas. Deterministic derivations belong in an explicitly authorized state or
+module contract; the reconciler retains an information gap if no accepted
+computation establishes a required derived value.
 
 ## Processing outcomes
 

@@ -387,8 +387,8 @@ func TestProcessExitCodesAndSignals(t *testing.T) {
 			go func() { done <- cmd.Wait() }()
 			waitLimit := 10 * time.Second
 			if mode == "incomplete" {
-				// Exhausting the cycle limit includes growing state in every request.
-				waitLimit = 60 * time.Second
+				// Exercise all 500 cycles, allowing race instrumentation overhead.
+				waitLimit = incompleteProcessWait
 			}
 			select {
 			case <-done:
