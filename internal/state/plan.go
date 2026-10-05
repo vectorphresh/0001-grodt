@@ -13,6 +13,7 @@ import (
 // Plans describe public intent and outcomes, never private reasoning. Revision
 // bodies live in the journal; only the latest bounded plan is projected.
 type Plan struct {
+	UnresolvedFocus    string              `json:"unresolved_focus,omitempty"`
 	Revision           uint64              `json:"revision"`
 	Description        string              `json:"description"`
 	CompletionCriteria string              `json:"completion_criteria,omitempty"`
@@ -112,7 +113,7 @@ func (s *Store) CheckPlan(plan Plan) error {
 	if !ok || t.AgentWork != nil || t.Work != nil {
 		return errors.New("no active reasoning task")
 	}
-	if !boundedText(plan.Description, true) || !boundedText(plan.CompletionCriteria, false) || !boundedText(plan.Outcome, false) || !validPlanStatus(plan.Status) || !validGaps(plan.InformationGaps) || len(plan.Steps) > 32 || len(plan.Evidence) > 8 {
+	if !boundedText(plan.UnresolvedFocus, false) || !boundedText(plan.Description, true) || !boundedText(plan.CompletionCriteria, false) || !boundedText(plan.Outcome, false) || !validPlanStatus(plan.Status) || !validGaps(plan.InformationGaps) || len(plan.Steps) > 32 || len(plan.Evidence) > 8 {
 		return errors.New("invalid or oversized plan")
 	}
 	expected := uint64(0)
@@ -144,7 +145,7 @@ func (s *Store) CheckPlan(plan Plan) error {
 		}
 		return nil
 	}
-	if plan.Status == "satisfied" && (plan.Outcome == "" || len(plan.Evidence) == 0 || len(plan.InformationGaps) > 0) {
+	if plan.Status == "satisfied" && (plan.Outcome == "" || len(plan.Evidence) == 0 || len(plan.InformationGaps) > 0 || plan.UnresolvedFocus != "") {
 		return errors.New("satisfaction requires outcome, evidence, and no gaps")
 	}
 	if err := validateEvidence(plan.Evidence); err != nil {

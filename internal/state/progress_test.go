@@ -58,8 +58,8 @@ func TestModuleOwnedProgressSurvivesCyclesAndInvalidates(t *testing.T) {
 		t.Fatal("completed step forgotten")
 	}
 	admit(`"failure"`)
-	if !bytes.Contains(s.ModelJSON(), []byte(`"status":"invalidated"`)) {
-		t.Fatal("stale knowledge did not invalidate progress")
+	if !bytes.Contains(s.ModelJSON(), []byte(`"freshness":"stale"`)) || bytes.Contains(s.ModelJSON(), []byte(`"status":"invalidated"`)) {
+		t.Fatal("freshness conflated with semantic invalidation")
 	}
 	if s.Snapshot().Knowledge["world"].Progress[0].Status != "established" {
 		t.Fatal("projection modified durable outcome")
@@ -69,8 +69,8 @@ func TestModuleOwnedProgressSurvivesCyclesAndInvalidates(t *testing.T) {
 		t.Fatal("refreshed progress remains invalid")
 	}
 	admit(`"change"`)
-	if !bytes.Contains(s.ModelJSON(), []byte(`"status":"invalidated"`)) {
-		t.Fatal("changed knowledge did not invalidate earlier conclusions")
+	if !bytes.Contains(s.ModelJSON(), []byte(`"freshness":"superseded"`)) || bytes.Contains(s.ModelJSON(), []byte(`"status":"invalidated"`)) {
+		t.Fatal("version change semantically invalidated historical progress")
 	}
 	if !bytes.Contains(encode(s.Journal()), []byte("Initial inspection completed")) {
 		t.Fatal("progress provenance missing")
@@ -101,5 +101,25 @@ func TestProgressValidationAndAtomicCommit(t *testing.T) {
 	}
 	if string(s.Snapshot().Knowledge["world"].Value) != "0" || len(s.Snapshot().Knowledge["world"].Progress) != 0 {
 		t.Fatal("invalid progress partially committed")
+	}
+}
+
+func TestModuleDeclaredSemanticInvalidationRemainsAuthoritative(t *testing.T) {
+	var taskID string
+	m := &processor{fn: func(_ json.RawMessage, _ Event) (json.RawMessage, error) {
+		return encode(map[string]any{"status": "processed", "progress": []ProgressRecord{{ID: "baseline", TaskID: taskID, Kind: "conclusion", Status: "invalidated", Summary: "Module explicitly invalidated the conclusion"}}}), nil
+	}}
+	s := newStore(t, Definition{Name: "world", Schema: json.RawMessage(`{"type":"object"}`), Initial: json.RawMessage(`{}`), Module: m})
+	var err error
+	taskID, err = s.Push(context.Background(), "Evaluate", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Admit(context.Background(), Source{Kind: "user", ID: "invalidate"}, json.RawMessage(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	projection := s.ModelJSON()
+	if !bytes.Contains(projection, []byte(`"status":"invalidated"`)) || !bytes.Contains(projection, []byte(`"freshness":"current"`)) {
+		t.Fatal("semantic invalidation conflated with freshness")
 	}
 }

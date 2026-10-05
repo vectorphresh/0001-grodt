@@ -21,6 +21,9 @@ func reconciliationFixture(t *testing.T) *ToolProvider {
 		return json.RawMessage(`{"status":"ignored"}`)
 	}}
 	p, _ := toolsHarness(t, []runstate.Definition{{Name: "configuration", Schema: json.RawMessage(`{"type":"object"}`), Initial: json.RawMessage(`{}`), Module: module}, {Name: "unrelated", Schema: json.RawMessage(`{"type":"object"}`), Initial: json.RawMessage(`{"private_context":"unrelated_partition_sentinel"}`), Module: &eventModule{}}}, false)
+	p.Evaluator = structuredClient{call: func(context.Context, string, string, json.RawMessage, openai.JSONSpecification) (openai.JSONResult, error) {
+		return openai.JSONResult{JSON: json.RawMessage(`{"continuity_valid":true,"satisfied":true,"rationale":"Supported procedural continuity."}`)}, nil
+	}}
 	return p
 }
 func reconciliationResult(t *testing.T, action string, updates []progressUpdate, focus string) openai.JSONResult {
@@ -40,9 +43,9 @@ func reconciliationResult(t *testing.T, action string, updates []progressUpdate,
 				step[key] = []any{}
 			}
 		}
-		wire = append(wire, map[string]any{"step": step, "intent_quote": update.IntentQuote})
+		wire = append(wire, map[string]any{"step": step})
 	}
-	return openai.JSONResult{JSON: mustJSON(t, map[string]any{"action": action, "updates": wire, "current_step": focus})}
+	return openai.JSONResult{JSON: mustJSON(t, map[string]any{"action": action, "updates": wire, "current_step": focus, "unresolved_focus": nil})}
 }
 func TestAutomaticReconciliationBeforeNextActor(t *testing.T) {
 	ctx := context.Background()
@@ -50,7 +53,7 @@ func TestAutomaticReconciliationBeforeNextActor(t *testing.T) {
 	actorCalls, reconciliations, evaluations := 0, 0, 0
 	p.Reconciler = structuredClient{call: func(_ context.Context, instructions, _ string, raw json.RawMessage, spec openai.JSONSpecification) (openai.JSONResult, error) {
 		reconciliations++
-		if spec.Name != "progress_reconciliation" || len(raw) > maxReconciliationInput || strings.Contains(string(raw), "unrelated_partition_sentinel") || strings.Contains(string(raw), "inputSchema") || strings.Contains(instructions, "Current actionable GRODT state") {
+		if spec.Name != "progress_reconciliation" || len(raw) > maxReconciliationInput || strings.Contains(string(raw), "inputSchema") || strings.Contains(instructions, "Current actionable GRODT state") {
 			t.Fatal("reconciliation received unrelated state or catalog")
 		}
 		var input reconciliationInput
@@ -61,14 +64,14 @@ func TestAutomaticReconciliationBeforeNextActor(t *testing.T) {
 			t.Fatal("accepted evidence missing")
 		}
 		evidence := []runstate.EvidenceReference{input.AcceptedEvidence[0].Reference}
-		return reconciliationResult(t, "progress", []progressUpdate{{Step: runstate.Step{ID: "initial", Description: "Establish initial configuration", CompletionCriteria: "Obtain accepted setting", Status: "satisfied", Outcome: "Initial setting established as enabled", Evidence: evidence}, IntentQuote: "Establish initial configuration"}, {Step: runstate.Step{ID: "investigation", Description: "Evaluate remaining uncertainty", Status: "active", InformationGaps: []string{"Remaining uncertainty unresolved"}}, IntentQuote: "Evaluate remaining uncertainty"}}, "investigation"), nil
+		return reconciliationResult(t, "progress", []progressUpdate{{Step: runstate.Step{ID: "initial", Description: "Establish initial configuration", CompletionCriteria: "Obtain accepted setting", Status: "satisfied", Outcome: "Initial setting established as enabled", Evidence: evidence}}, {Step: runstate.Step{ID: "investigation", Description: "Evaluate remaining uncertainty", Status: "active", InformationGaps: []string{"Remaining uncertainty unresolved"}}}}, "investigation"), nil
 	}}
 	p.Evaluator = structuredClient{call: func(_ context.Context, _, _ string, raw json.RawMessage, spec openai.JSONSpecification) (openai.JSONResult, error) {
 		evaluations++
-		if spec.Name != "plan_completion" || !strings.Contains(string(raw), "enabled") {
+		if spec.Name != "procedural_continuity_evaluation" || !strings.Contains(string(raw), "enabled") {
 			t.Fatal("completion path bypassed")
 		}
-		return openai.JSONResult{JSON: json.RawMessage(`{"satisfied":true,"rationale":"Accepted setting supports the stated intent."}`)}, nil
+		return openai.JSONResult{JSON: json.RawMessage(`{"continuity_valid":true,"satisfied":true,"rationale":"Accepted setting supports the stated intent."}`)}, nil
 	}}
 	p.Client = nativeClient(func(_ context.Context, r toolcall.Request) (toolcall.Response, error) {
 		actorCalls++
@@ -109,7 +112,7 @@ func TestReconciliationPartialExistingPlanAndRejectedSatisfaction(t *testing.T) 
 			evaluations := 0
 			p.Evaluator = structuredClient{call: func(context.Context, string, string, json.RawMessage, openai.JSONSpecification) (openai.JSONResult, error) {
 				evaluations++
-				return openai.JSONResult{JSON: json.RawMessage(`{"satisfied":false,"rationale":"The property remains uncharacterized."}`)}, nil
+				return openai.JSONResult{JSON: json.RawMessage(`{"continuity_valid":true,"satisfied":false,"rationale":"The property remains uncharacterized."}`)}, nil
 			}}
 			p.Reconciler = structuredClient{call: func(_ context.Context, _, _ string, raw json.RawMessage, _ openai.JSONSpecification) (openai.JSONResult, error) {
 				var input reconciliationInput
@@ -133,7 +136,11 @@ func TestReconciliationPartialExistingPlanAndRejectedSatisfaction(t *testing.T) 
 			if len(task.Plan.Steps) != 1 || task.Plan.Steps[0].Status != "partial" || len(task.Plan.Steps[0].InformationGaps) != 1 {
 				t.Fatal("existing plan lost or satisfaction fabricated")
 			}
-			if evaluations != map[bool]int{false: 0, true: 1}[reject] || world != string(p.Store.Snapshot().Knowledge["configuration"].Value) {
+			expectedEvaluations := 1
+			if reject {
+				expectedEvaluations = 2
+			}
+			if evaluations != expectedEvaluations || world != string(p.Store.Snapshot().Knowledge["configuration"].Value) {
 				t.Fatal("incorrect evaluation or domain state changed")
 			}
 		})
@@ -169,12 +176,13 @@ func TestNoProgressBoundedAndFailedReconciliationAtomic(t *testing.T) {
 					return openai.JSONResult{JSON: mustJSON(t, map[string]any{"unrestricted": strings.Repeat("x", maxReconciliationOutput+1)})}, nil
 				}
 				step := runstate.Step{ID: "new", Description: "New intent", Status: "partial", Evidence: []runstate.EvidenceReference{{Partition: "configuration", Version: 99, Path: "/fabricated"}}}
-				quote := "inconclusive"
 				if mode == "invented_intent" {
-					quote = "Unexpressed strategy"
 					step.Evidence = nil
 				}
-				return reconciliationResult(t, "progress", []progressUpdate{{Step: step, IntentQuote: quote}}, ""), nil
+				return reconciliationResult(t, "progress", []progressUpdate{{Step: step}}, ""), nil
+			}}
+			p.Evaluator = structuredClient{call: func(context.Context, string, string, json.RawMessage, openai.JSONSpecification) (openai.JSONResult, error) {
+				return openai.JSONResult{JSON: json.RawMessage(`{"continuity_valid":false,"satisfied":false,"rationale":"Invented strategy is not procedural continuity."}`)}, nil
 			}}
 			prior := p.Store.Snapshot()
 			if err := p.reconcile(ctx, prior, "An inconclusive observation", nil); err == nil {
@@ -217,7 +225,7 @@ func TestReconciliationAllowsRepeatedRetrievalForNewIntent(t *testing.T) {
 	p := reconciliationFixture(t)
 	turns, reconciliations := 0, 0
 	p.Evaluator = structuredClient{call: func(context.Context, string, string, json.RawMessage, openai.JSONSpecification) (openai.JSONResult, error) {
-		return openai.JSONResult{JSON: json.RawMessage(`{"satisfied":true,"rationale":"The accepted setting supports this observation intent."}`)}, nil
+		return openai.JSONResult{JSON: json.RawMessage(`{"continuity_valid":true,"satisfied":true,"rationale":"The accepted setting supports this observation intent."}`)}, nil
 	}}
 	p.Reconciler = structuredClient{call: func(_ context.Context, _, _ string, raw json.RawMessage, _ openai.JSONSpecification) (openai.JSONResult, error) {
 		reconciliations++
@@ -231,7 +239,7 @@ func TestReconciliationAllowsRepeatedRetrievalForNewIntent(t *testing.T) {
 			}
 		}
 		step := runstate.Step{ID: id, Description: description, Status: "satisfied", Outcome: "Setting observed as enabled", Evidence: []runstate.EvidenceReference{input.AcceptedEvidence[0].Reference}}
-		return reconciliationResult(t, "progress", []progressUpdate{{Step: step, IntentQuote: description}}, ""), nil
+		return reconciliationResult(t, "progress", []progressUpdate{{Step: step}}, ""), nil
 	}}
 	p.Client = nativeClient(func(_ context.Context, r toolcall.Request) (toolcall.Response, error) {
 		turns++
@@ -278,11 +286,190 @@ func TestReconciliationExcludesStaleEvidence(t *testing.T) {
 		}
 		return reconciliationResult(t, "no_progress", []progressUpdate{}, ""), nil
 	}}
+	p.Evaluator = structuredClient{call: func(_ context.Context, instructions, _ string, raw json.RawMessage, _ openai.JSONSpecification) (openai.JSONResult, error) {
+		if !strings.Contains(instructions, "Do not treat evidence freshness as historical semantic invalidation") || !strings.Contains(string(raw), `"freshness":"stale"`) {
+			t.Fatal("historical freshness context missing")
+		}
+		return continuityResult(true, "Historical outcome remains established despite stale evidence."), nil
+	}}
 	if err := p.reconcile(ctx, before, "Revisit current setting", nil); err != nil {
 		t.Fatal(err)
 	}
 	active, _ := p.Store.Active()
 	if active.Plan.Steps[0].Status != "satisfied" {
 		t.Fatal("staleness mechanically erased historical initial-setting outcome")
+	}
+}
+
+func TestReconciliationCorrectsHostValidationBeforeCommit(t *testing.T) {
+	p := reconciliationFixture(t)
+	before := p.Store.Snapshot()
+	calls := 0
+	p.Reconciler = structuredClient{call: func(_ context.Context, instructions, _ string, _ json.RawMessage, _ openai.JSONSpecification) (openai.JSONResult, error) {
+		calls++
+		if task, _ := p.Store.Active(); task.Plan != nil {
+			t.Fatal("rejected proposal mutated the plan")
+		}
+		id := "invalid step id"
+		if calls == 2 {
+			if !strings.Contains(instructions, "invalid or duplicate step") {
+				t.Fatal("host feedback missing")
+			}
+			id = "inspect"
+		}
+		return reconciliationResult(t, "progress", []progressUpdate{{Step: runstate.Step{ID: id, Description: "Inspect configuration", Status: "partial", Outcome: "Investigation unresolved"}}}, ""), nil
+	}}
+	if err := p.reconcile(context.Background(), before, "Inspect configuration", nil); err != nil {
+		t.Fatal(err)
+	}
+	task, _ := p.Store.Active()
+	if calls != 2 || task.Plan.Revision != 1 {
+		t.Fatal("proposal was not corrected exactly once")
+	}
+}
+
+func TestReconciliationCorrectsContradictoryNoProgress(t *testing.T) {
+	p := reconciliationFixture(t)
+	calls := 0
+	p.Reconciler = structuredClient{call: func(_ context.Context, instructions, _ string, _ json.RawMessage, _ openai.JSONSpecification) (openai.JSONResult, error) {
+		calls++
+		if calls == 1 {
+			return reconciliationResult(t, "progress", []progressUpdate{{Step: runstate.Step{ID: "baseline", Description: "Establish baseline", Status: "satisfied", Outcome: "Established", Evidence: []runstate.EvidenceReference{{Partition: "configuration", Version: 1, Path: "setting.enabled"}}}}}, ""), nil
+		}
+		if calls == 2 {
+			return reconciliationResult(t, "no_progress", []progressUpdate{{Step: runstate.Step{ID: "baseline", Description: "Establish baseline", Status: "active"}}}, "baseline"), nil
+		}
+		if !strings.Contains(instructions, "no-progress decision contains procedural changes") || !strings.Contains(instructions, `return exactly {"action":"no_progress","updates":[],"current_step":"","unresolved_focus":null}`) {
+			t.Fatal("correction lacks an actionable no-progress response")
+		}
+		return reconciliationResult(t, "no_progress", nil, ""), nil
+	}}
+	if err := p.reconcile(context.Background(), p.Store.Snapshot(), "Establish baseline", nil); err != nil {
+		t.Fatal(err)
+	}
+	if task, _ := p.Store.Active(); calls != 3 || task.Plan != nil {
+		t.Fatal("invalid deltas committed or correction did not complete")
+	}
+}
+
+func TestReconciliationEvidenceSubtreeScope(t *testing.T) {
+	p := reconciliationFixture(t)
+	ctx := context.Background()
+	if _, err := p.Store.Admit(ctx, runstate.Source{Kind: "mcp", ID: "read"}, json.RawMessage(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	version := p.Store.Snapshot().Knowledge["configuration"].Metadata.Version
+	for _, tc := range []struct {
+		name, supplied, cited string
+		version               uint64
+		valid                 bool
+	}{
+		{"root child", "", "/setting", version, true},
+		{"missing child", "", "/missing", version, false},
+		{"wrong version", "", "/setting", version + 1, false},
+		{"sibling prefix", "/set", "/setting", version, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := reconciliationInput{TaskID: p.Store.Snapshot().Tasks.Stack[0], ActorIntent: "Inspect setting", AcceptedEvidence: []reconciliationEvidence{{Reference: runstate.EvidenceReference{Partition: "configuration", Version: version, Path: tc.supplied}, Freshness: "current", Value: json.RawMessage(`{}`)}}}
+			candidate := reconciliationResult(t, "progress", []progressUpdate{{Step: runstate.Step{ID: "setting", Description: "Inspect setting", Status: "satisfied", Outcome: "Setting enabled", Evidence: []runstate.EvidenceReference{{Partition: "configuration", Version: tc.version, Path: tc.cited}}}}}, "setting")
+			plan, err := p.reconciliationPlan(input, candidate.JSON)
+			if (err == nil) != tc.valid || (tc.valid && (plan == nil || plan.CurrentStep != "")) {
+				t.Fatalf("unexpected scope validation: plan=%v err=%v", plan, err)
+			}
+		})
+	}
+}
+
+func TestReconciliationRepeatedCompletedStepWithEmptyGaps(t *testing.T) {
+	ctx := context.Background()
+	p := reconciliationFixture(t)
+	if _, err := p.Store.Admit(ctx, runstate.Source{Kind: "mcp", ID: "baseline"}, json.RawMessage(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	version := p.Store.Snapshot().Knowledge["configuration"].Metadata.Version
+	step := runstate.Step{ID: "baseline", Description: "Establish baseline", Status: "satisfied", Outcome: "Setting enabled", Evidence: []runstate.EvidenceReference{{Partition: "configuration", Version: version, Path: "/setting"}}}
+	if err := p.Store.RevisePlan(ctx, runstate.Plan{Description: "Inspect system", Status: "active", Steps: []runstate.Step{step}}); err != nil {
+		t.Fatal(err)
+	}
+	before := p.Store.Snapshot()
+	if _, err := p.Store.Admit(ctx, runstate.Source{Kind: "mcp", ID: "orders"}, json.RawMessage(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	p.Reconciler = structuredClient{call: func(_ context.Context, _, _ string, raw json.RawMessage, _ openai.JSONSpecification) (openai.JSONResult, error) {
+		calls++
+		var input reconciliationInput
+		if err := json.Unmarshal(raw, &input); err != nil {
+			t.Fatal(err)
+		}
+		if input.EvidenceState[0].Freshness != "superseded" {
+			t.Fatal("expected historical evidence after partition refresh")
+		}
+		return reconciliationResult(t, "progress", []progressUpdate{{Step: step}}, "baseline"), nil
+	}}
+	if err := p.reconcile(ctx, before, "Inspect open orders", nil); err != nil {
+		t.Fatal(err)
+	}
+	active, _ := p.Store.Active()
+	if calls != 1 || active.Plan.Revision != 1 || active.Plan.CurrentStep != "" || active.Plan.Steps[0].Evidence[0].Version != version {
+		t.Fatal("replayed history was retried, revised, focused, or refreshed")
+	}
+	step.Outcome = "Changed historical outcome"
+	proposal := reconciliationResult(t, "progress", []progressUpdate{{Step: step}}, "")
+	if _, err := p.reconciliationPlan(p.reconciliationInput(before, "Inspect open orders", nil), proposal.JSON); err == nil {
+		t.Fatal("completed history rewrite was accepted")
+	}
+}
+
+func TestReconciliationPreservesHistoryWhileAcceptingNewObservation(t *testing.T) {
+	ctx := context.Background()
+	p := reconciliationFixture(t)
+	if _, err := p.Store.Admit(ctx, runstate.Source{Kind: "mcp", ID: "baseline"}, json.RawMessage(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	version := p.Store.Snapshot().Knowledge["configuration"].Metadata.Version
+	old := runstate.Step{ID: "baseline", Description: "Establish baseline", Status: "satisfied", Outcome: "Setting enabled", Evidence: []runstate.EvidenceReference{{Partition: "configuration", Version: version, Path: "/setting"}}}
+	if err := p.Store.RevisePlan(ctx, runstate.Plan{Description: "Inspect system", Status: "active", Steps: []runstate.Step{old}}); err != nil {
+		t.Fatal(err)
+	}
+	before := p.Store.Snapshot()
+	if _, err := p.Store.Admit(ctx, runstate.Source{Kind: "mcp", ID: "refresh"}, json.RawMessage(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	input := p.reconciliationInput(before, "Inspect current setting", nil)
+	refreshed := old
+	refreshed.Evidence = []runstate.EvidenceReference{input.AcceptedEvidence[0].Reference}
+	newStep := runstate.Step{ID: "current", Description: "Inspect current setting", Status: "satisfied", Outcome: "Current setting enabled", Evidence: refreshed.Evidence}
+	proposal := reconciliationResult(t, "progress", []progressUpdate{{Step: refreshed}, {Step: newStep}}, "current")
+	plan, err := p.reconciliationPlan(input, proposal.JSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan == nil || len(plan.Steps) != 2 || plan.Steps[0].Evidence[0] != old.Evidence[0] || plan.Steps[1].Evidence[0] != refreshed.Evidence[0] {
+		t.Fatal("historical provenance lost or new observation discarded")
+	}
+	proposal = reconciliationResult(t, "progress", []progressUpdate{{Step: refreshed}}, "baseline")
+	if plan, err := p.reconciliationPlan(input, proposal.JSON); err != nil || plan != nil {
+		t.Fatalf("version-only replay should be a no-op: plan=%v err=%v", plan, err)
+	}
+	for _, change := range []string{"outcome", "criteria", "path", "version"} {
+		t.Run(change, func(t *testing.T) {
+			changed := refreshed
+			changed.Evidence = append([]runstate.EvidenceReference(nil), refreshed.Evidence...)
+			switch change {
+			case "outcome":
+				changed.Outcome = "Different conclusion"
+			case "criteria":
+				changed.CompletionCriteria = "Different criteria"
+			case "path":
+				changed.Evidence[0].Path = ""
+			case "version":
+				changed.Evidence[0].Version++
+			}
+			proposal := reconciliationResult(t, "progress", []progressUpdate{{Step: changed}}, "")
+			if _, err := p.reconciliationPlan(input, proposal.JSON); err == nil {
+				t.Fatal("historical rewrite or unsupplied evidence accepted")
+			}
+		})
 	}
 }

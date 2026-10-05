@@ -33,3 +33,10 @@ go.work.sum
 # .idea/
 # .vscode/
 settings.json
+
+# grodt traces and logs
+traces/**
+*.log
+prompt.txt
+# add config.yaml to .gitignore to avoid committing sensitive information
+config.yaml

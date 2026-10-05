@@ -103,9 +103,11 @@ The host stamps `knowledge_version`; modules must omit it or supply zero.
 
 Model projection includes only records scoped to active tasks. Records appear
 under `established_progress` or, for focus records, `active_focus`. Stale partition
-metadata or a changed partition version projects their status as `invalidated`
-without altering the audit record. Modules reassert still-valid outcomes when
-updating their value; the runtime interprets no domain semantics. Progress is
+metadata or a changed partition version is reported separately as `freshness`
+(`stale` or `superseded`), without changing the module-declared procedural
+`status`. Version changes alone do not invalidate historical outcomes. Modules
+explicitly declare semantic invalidation and may reassert fresh observations
+when updating their value; the runtime interprets no domain semantics. Progress is
 journaled with the accepted module result and retained in full snapshots.
 
 Optional `requests` may accompany `ignored`, `processed`, or `mutation`, never

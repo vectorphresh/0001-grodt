@@ -157,6 +157,10 @@
         "current_step": {
           "type": "string",
           "maxLength": 64
+        },
+        "unresolved_focus": {
+          "type": "string",
+          "maxLength": 512
         }
       },
       "required": [

@@ -5,7 +5,8 @@
       "enum": [
         "no_progress",
         "progress"
-      ]
+      ],
+      "description": "no_progress requires empty updates, empty current_step, and null unresolved_focus. progress may update steps or focus."
     },
     "updates": {
       "type": "array",
@@ -54,7 +55,8 @@
                     },
                     "path": {
                       "type": "string",
-                      "maxLength": 256
+                      "maxLength": 256,
+                      "pattern": "^(/|$)"
                     }
                   },
                   "required": [
@@ -64,7 +66,8 @@
                   ],
                   "additionalProperties": false
                 },
-                "maxItems": 8
+                "maxItems": 8,
+                "description": "Cite supplied accepted evidence or a resolvable child JSON pointer within its value, at the same partition and version."
               },
               "information_gaps": {
                 "type": "array",
@@ -91,28 +94,34 @@
               "id"
             ],
             "additionalProperties": false
-          },
-          "intent_quote": {
-            "type": "string",
-            "maxLength": 512
           }
         },
         "required": [
-          "step",
-          "intent_quote"
+          "step"
         ],
         "additionalProperties": false
-      }
+      },
+      "description": "Must be [] when action is no_progress."
     },
     "current_step": {
       "type": "string",
-      "maxLength": 64
+      "maxLength": 64,
+      "description": "Must be an empty string when action is no_progress."
+    },
+    "unresolved_focus": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 512,
+      "description": "null preserves focus; empty string clears it; otherwise concise unresolved intent, never a new strategy or tool sequence."
     }
   },
   "required": [
     "action",
     "updates",
-    "current_step"
+    "current_step",
+    "unresolved_focus"
   ],
   "additionalProperties": false
 }

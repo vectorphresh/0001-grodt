@@ -99,8 +99,9 @@ bounded `progress` records alongside accepted processing or mutations to declare
 established conclusions, completed requirements, and unresolved focus. The model
 receives task-relevant `established_progress` and `active_focus` separately from
 current knowledge. Records replace prior progress rather than append per cycle;
-stale knowledge or a changed knowledge version makes earlier outcomes eligible
-for reassessment. See the [module ABI](state-module-abi.md) for fields and limits.
+freshness is reported separately from the module-declared procedural status.
+A stale observation or changed knowledge version alone does not semantically
+invalidate a fixed historical outcome. See the [module ABI](state-module-abi.md) for fields and limits.
 The host never derives these outcomes from tool names or task payloads. Partition values
 remain opaque to the host and should represent current world state, not an event
 archive. The CLI
@@ -168,54 +169,99 @@ available in the snapshot/journal or trace rather than recursive model context.
 
 ## Automatic procedural reconciliation
 
-Native-tool runs reconcile progress after each completed external invocation batch,
-after module acceptance and before the next ordinary actor inference. The actor
-need not call `grodt_manage_plan` first. The checkpoint asks what the completed
-activity established; planning still asks what to pursue, and root evaluation
-still asks whether the objective is complete. The same configured client performs
-all three operations; no new model or provider configuration is required.
+Native-tool runs reconcile after each completed external invocation batch, after
+module acceptance and before the next actor inference. The checkpoint interprets
+accumulated current knowledge together with procedural context, actor intent and
+recent activity: what is settled, and what remains unresolved. It selects no future
+strategy, instruments, analyses, tool calls or execution actions. The existing
+configured reconciler and evaluator clients are reused; there is no additional
+model, provider, dependency graph or configuration.
 
 The structured `progress_reconciliation` request uses the observed client directly,
-without `stateflow.Client` full-state injection. It contains bounded active intent
-and lineage, relevant current plan steps, the latest public actor intent, invocation
-names, and small resolved values from accepted partition changes. Unchanged
-partitions, the tool catalog, journal, superseded plans and conversation history
-are excluded. References from established steps may also be resolved at a new
-accepted version to support an intentional refresh whose value stayed the same.
-Older references retain explicit current/superseded/stale/missing metadata.
+without full-state injection. It contains the root request, active objective and
+bounded lineage, current plan, task-relevant module progress, latest public actor
+intent and invocation names. `accepted_evidence` is one canonical table of exact
+current accepted subtrees, including unchanged observations from earlier batches.
+`recent` distinguishes changed values and intentional MCP source refreshes. No
+conversation, catalog, invocation history, journal, or prior reconciliation request
+is included. The actor's ordinary full-knowledge projection is unchanged.
 
-Reconciliation input data and candidate outputs are limited to 64 KiB each. The original request
-is clipped to 8 KiB, actor intent to 4 KiB, relevant plan content to 24 KiB, and
-accepted evidence to 64 references of at most 4 KiB each, within the overall input
-limit. JSON numbers retain their precision. Evidence selection reports truncation;
-the reconciler must not invent missing evidence. It emits at most eight step
-updates and an optional current-step change, rather than replacing task state.
-A new step requires an exact quote from the latest actor intent; the runtime
-validates that provenance while the model interprets its semantic meaning.
+`state_coverage` inventories state partitions and MCP sources with observation
+freshness, value type, item count, selected/omitted value counts and complete/partial
+coverage. `omitted_sources` reports inventory cardinality overflow. Payload bytes
+are allocated equally across partitions and then their MCP sources; selection
+proceeds in rounds across sources. A large result cannot consume another source's
+byte allocation or all evidence slots solely because it is large. When source
+cardinality exceeds the inventory/evidence budget, omissions remain explicit.
+Partial coverage never establishes exhaustive inspection or absence of omitted
+facts. Oversized scalar text is omitted rather than represented as complete text.
 
-An explicit `no_progress` result changes no plan and creates no synthetic steps.
-Partial updates can record missing information. New satisfaction proposals use
-exactly the shared completion evaluator used by deliberate planning, with accepted
-evidence and no remaining gaps; rejection retains partial progress. All proposals
-pass revision, evidence and completed-history preservation checks before commit.
-Identical plans are not revised. Neither reconciliation nor evaluation admits
-world-state mutations or recursively triggers another checkpoint. Repeated
-retrieval remains allowed and does not erase fixed historical observations.
+Input data and candidate outputs are limited to 64 KiB each. The original request
+is initially clipped to 8 KiB, actor intent to 4 KiB, and plan content to 24 KiB;
+encoded-size checks further trim context to reserve accumulated-state space. At
+most 64 evidence values of at most 4 KiB are selected. Current-step evidence is
+preferred within its source share. JSON numbers retain precision. Overlapping
+parent/child values are not duplicated. MCP text is omitted only when it exactly
+encodes the accompanying structured content; distinct text remains eligible.
 
-The existing structured correction limit applies to schema-invalid responses.
-Provider failures, malformed JSON, oversized candidates and invalid semantic
-updates fail the generation according to existing provider-failure policy, while
-accepted domain state and earlier plans remain intact. No progress is fabricated
-as a fallback. Request/response bodies and usage use the existing trace/accounting
-path; `procedural_reconciliation` journal entries retain considered evidence,
-proposed updates and failure codes, alongside completion decisions and revisions.
-These audit bodies never enter subsequent actor projections.
+Reconciliation emits at most eight step deltas, a current-step identifier and an
+`unresolved_focus` update (`null` preserves, an empty string clears). Plans persist
+optional `unresolved_focus` as a bounded descriptive note rather than an artificial
+future workflow step. Existing plan descriptions, step intent, criteria and order
+remain authoritative. Retrospective outcomes may be recorded without an exact
+latest-turn quote when supported by objective, procedural context and accepted
+state. Reconciliation cannot replace a strategy or generate competing workflows.
+The actor projection indexes `established_steps` and `unresolved_steps` within each
+task, referencing its existing plan without duplicating descriptions.
 
-Reconciliation performs no MCP invocations and uses no invocation budget. It
-records evidence-backed procedural meaning rather than interpreting domain
-formulas. Deterministic derivations belong in an explicitly authorized state or
-module contract; the reconciler retains an information gap if no accepted
-computation establishes a required derived value.
+Every reconciliation result, including `no_progress` and identical proposals, passes independent
+`procedural_continuity_evaluation` through the existing evaluator. One request
+checks both procedural scope (`continuity_valid`) and new satisfaction claims
+(`satisfied`); evidence values appear once in its context. Focus-only changes are
+also checked. The entire resulting representation must agree with established
+outcomes and accepted evidence; unchanged focus and gaps are checked too. A successful
+empty collection observes zero matches within its query scope; failed or missing
+results are unknown, and partial coverage cannot establish exhaustive absence.
+Unsupported strategy or continuity receives bounded correction
+feedback before any procedural commit. Unsupported satisfaction retains partial
+status and a concise gap, followed by consistency evaluation of the downgraded
+representation before commit. Ordinary actor-authored planning retains its existing
+completion schema and authority. Module-owned knowledge is never written by these
+procedural operations.
+
+Evidence freshness is separate from semantic status. Current/superseded/stale/missing
+labels describe observations; changing a partition version does not invalidate a
+fixed historical conclusion. Original completed-step provenance is retained,
+including version-only replays. Module-declared progress status is preserved in
+projection and accompanied by separate freshness. New satisfaction claims still
+require current resolvable evidence, outcomes and no remaining gaps. Explicit
+semantic invalidation and deliberate repeated retrieval remain available.
+
+`no_progress` requires empty updates, empty current step and null unresolved focus.
+It asserts that retained procedural state remains consistent unchanged. Contradictions
+receive bounded evaluator feedback through the existing three-attempt correction
+path, permitting focus-only correction. Exhaustion fails reconciliation.
+Identical normalized plans are not revised, including after an evaluator downgrades
+a repeated unsupported satisfaction claim. Duplicate identical outcomes under new
+IDs are rejected; the scope evaluator also checks semantic duplicates. Existing
+revision, task identity, evidence and completed-history checks remain in force.
+Neither reconciliation nor evaluation admits world-state events or recursively
+triggers another checkpoint. Provider failures, malformed output and exhausted
+corrections retain existing failure behavior; no progress is fabricated as fallback.
+
+The existing trace/accounting path captures request/response bodies and usage.
+`procedural_reconciliation` journal entries retain the bounded considered context,
+proposed changes and failure code; evaluation and plan revision use their existing
+journal entries. These audit bodies are not projected into later actor context.
+A meaningful inferred update may require an evaluator request where none was
+previously required; satisfaction and scope checks are combined, and normalized
+no-ops require no evaluation. The effect on overall cost depends on avoided retries
+and repeated setup and is not guaranteed.
+
+Reconciliation performs no MCP calls. Deterministic derivations belong in an
+explicitly authorized state/module computation contract. If no accepted computation
+establishes a required derived value, reconciliation retains an information gap
+rather than deriving domain formulas with LLM arithmetic.
 
 ## Processing outcomes
 

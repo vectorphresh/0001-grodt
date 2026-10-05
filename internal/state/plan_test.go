@@ -127,3 +127,40 @@ func TestRootCompletionDoesNotAutoSatisfyChildren(t *testing.T) {
 		}
 	}
 }
+
+func TestPlanFocusCompatibilityBoundsAndCompletion(t *testing.T) {
+	s := planStore(t)
+	ctx := context.Background()
+	var legacy Plan
+	if err := json.Unmarshal([]byte(`{"description":"Legacy intent","status":"active","revision":0,"steps":[]}`), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacy.UnresolvedFocus != "" {
+		t.Fatal("legacy plan gained focus")
+	}
+	if err := s.RevisePlan(ctx, legacy); err != nil {
+		t.Fatal(err)
+	}
+	active, _ := s.Active()
+	next := *active.Plan
+	next.UnresolvedFocus = strings.Repeat("x", 513)
+	if err := s.RevisePlan(ctx, next); err == nil {
+		t.Fatal("oversized focus accepted")
+	}
+	next.UnresolvedFocus = "Evaluate remaining information"
+	if err := s.RevisePlan(ctx, next); err != nil {
+		t.Fatal(err)
+	}
+	active, _ = s.Active()
+	next = *active.Plan
+	next.Status = "satisfied"
+	next.Outcome = "Complete"
+	next.Evidence = []EvidenceReference{{Partition: "world", Path: "/setting"}}
+	if err := s.CheckPlan(next); err == nil {
+		t.Fatal("plan satisfied with unresolved focus")
+	}
+	next.UnresolvedFocus = ""
+	if err := s.CheckPlan(next); err != nil {
+		t.Fatal(err)
+	}
+}
