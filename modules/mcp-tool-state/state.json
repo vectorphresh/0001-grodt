@@ -1,0 +1,11 @@
+{
+  "partitions": [
+    {
+      "name": "mcp_tools",
+      "schema": "schema.json",
+      "initial": "initial.json",
+      "module": "mcp-tool-state.wasm",
+      "abi": "grodt.state/v1"
+    }
+  ]
+}

@@ -23,7 +23,7 @@ type GoalEvaluation struct {
 	Rationale string `json:"rationale"`
 }
 
-const evaluationInstructions = "Determine whether the original objective has been achieved using the supplied execution information. Set achieved=true only when the objective is satisfied by the current response. An intermediate step is not completion. Return the requested structured evaluation with a concise outcome rationale, not private reasoning."
+const evaluationInstructions = "Determine whether the original objective has been achieved using the supplied execution information and accepted state. Set achieved=true only when those observations establish the original objective, even if no final actor response has been written yet. Finishing a procedural plan is not by itself achievement of the objective. An intermediate step is not completion. Return the requested structured evaluation with a concise outcome rationale, not private reasoning."
 const evaluationSchema = `{"type":"object","properties":{"achieved":{"type":"boolean"},"rationale":{"type":"string"}},"required":["achieved","rationale"],"additionalProperties":false}`
 
 func evaluate(ctx context.Context, client openai.Client, objective, initial string, state loop.State) (out GoalEvaluation, opErr error) {
@@ -147,6 +147,10 @@ func runObjectiveWithEvaluator(ctx context.Context, objective, initial string, p
 	defer func() {
 		if runErr != nil && outcome == "failed" {
 			rationale = "Operation failed; cycle discarded."
+			var toolErr *loop.ToolOperationError
+			if errors.As(runErr, &toolErr) {
+				rationale = toolErr.Error() + "; cycle discarded."
+			}
 		}
 		if errors.Is(runErr, context.Canceled) {
 			outcome = "cancelled"
@@ -167,6 +171,16 @@ func runObjectiveWithEvaluator(ctx context.Context, objective, initial string, p
 		}
 	}()
 	history := []string{}
+	for _, provider := range providers {
+		if tools, ok := provider.(*loop.ToolProvider); ok {
+			previous := tools.CheckObjective
+			tools.CheckObjective = func(ctx context.Context, state loop.State) (loop.ObjectiveEvaluation, error) {
+				result, err := evaluator(ctx, client, objective, initial, state)
+				return loop.ObjectiveEvaluation{Achieved: result.Achieved, Rationale: result.Rationale}, err
+			}
+			defer func() { tools.CheckObjective = previous }()
+		}
+	}
 	for cycle := 1; cycle <= maxCycles; cycle++ {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -188,7 +202,13 @@ func runObjectiveWithEvaluator(ctx context.Context, objective, initial string, p
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		evaluation, err := evaluator(ctx, client, objective, initial, state)
+		var evaluation GoalEvaluation
+		var err error
+		if state.ObjectiveEvaluation != nil && state.ObjectiveEvaluation.Achieved {
+			evaluation = GoalEvaluation{Achieved: true, Rationale: state.ObjectiveEvaluation.Rationale}
+		} else {
+			evaluation, err = evaluator(ctx, client, objective, initial, state)
+		}
 		if err != nil {
 			return safeCycleError(ctx, err)
 		}
@@ -206,7 +226,7 @@ func runObjectiveWithEvaluator(ctx context.Context, objective, initial string, p
 				}
 			}
 			if evaluation.Achieved {
-				if err := store.Complete(ctx, state.Response); err != nil {
+				if err := store.CompleteObjective(ctx, state.Response); err != nil {
 					return err
 				}
 				outcome = "achieved"
@@ -215,14 +235,25 @@ func runObjectiveWithEvaluator(ctx context.Context, objective, initial string, p
 			outcome = "incomplete"
 			return errIncomplete
 		}
-		// Preserve relevant provider context only after successful generation/evaluation.
-		history = slices.Clone(state.Context)
+		// Replace temporary guidance. The store owns durable knowledge; responses
+		// and evaluation feedback must not become an append-only prompt archive.
+		history = nil
 		if state.Response != "" {
-			history = append(history, "Previous response:\n"+state.Response)
+			history = append(history, "Previous response:\n"+continuationText(state.Response))
 		}
-		history = append(history, "Evaluation rationale (temporary guidance):\n"+rationale)
+		history = append(history, "Evaluation rationale (temporary guidance):\n"+continuationText(rationale))
 	}
 	return errIncomplete
+}
+
+// Bound temporary prose even when a model echoes a whole state snapshot.
+func continuationText(text string) string {
+	const maxRunes = 4096
+	runes := []rune(text)
+	if len(runes) > maxRunes {
+		return string(runes[:maxRunes]) + "\n[Temporary guidance truncated; use current state for authoritative facts.]"
+	}
+	return text
 }
 
 func safeCycleError(ctx context.Context, err error) error {
@@ -233,6 +264,10 @@ func safeCycleError(ctx context.Context, err error) error {
 		if errors.Is(err, sentinel) {
 			return sentinel
 		}
+	}
+	var toolErr *loop.ToolOperationError
+	if errors.As(err, &toolErr) {
+		return fmt.Errorf("run failed; cycle discarded: %w", toolErr)
 	}
 	return errors.New("run failed; cycle discarded")
 }

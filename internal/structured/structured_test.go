@@ -66,8 +66,36 @@ func TestExhaustionAndPartialUsage(t *testing.T) {
 		}
 		return openai.JSONResult{JSON: json.RawMessage(`{}`), Usage: usage}, nil
 	})
-	if !errors.Is(err, ErrAttemptsExhausted) || calls != MaxStructuredAttempts || result.Requests != 3 || result.JSON != nil || result.UsageRequests != 2 || result.Usage.TotalTokens != 14 {
+	if !errors.Is(err, ErrAttemptsExhausted) || calls != MaxStructuredAttempts || result.Requests != uint64(MaxStructuredAttempts) || result.JSON != nil || result.UsageRequests != uint64(MaxStructuredAttempts-1) || result.Usage.TotalTokens != int64(MaxStructuredAttempts-1)*7 {
 		t.Fatalf("%+v %v calls=%d", result, err, calls)
+	}
+}
+
+func TestCorrectionSucceedsOnFifthAttempt(t *testing.T) {
+	if MaxStructuredAttempts != 5 {
+		t.Fatal("expected five total schema validation attempts")
+	}
+	calls := 0
+	for operation := 0; operation < 2; operation++ {
+		attempts := 0
+		result, err := Generate(context.Background(), json.RawMessage(schema), func(_ context.Context, feedback json.RawMessage) (openai.JSONResult, error) {
+			attempts++
+			calls++
+			if (len(feedback) == 0) != (attempts == 1) {
+				t.Fatal("correction feedback missing or leaked between operations")
+			}
+			candidate := json.RawMessage(`{}`)
+			if attempts == 5 {
+				candidate = json.RawMessage(`{"answer":"accepted"}`)
+			}
+			return openai.JSONResult{JSON: candidate}, nil
+		})
+		if err != nil || attempts != 5 || result.Requests != 5 || string(result.JSON) != `{"answer":"accepted"}` {
+			t.Fatalf("fifth attempt failed: %+v %v", result, err)
+		}
+	}
+	if calls != 10 {
+		t.Fatal("attempt budget did not reset per operation")
 	}
 }
 

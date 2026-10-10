@@ -41,7 +41,7 @@ func newMCPMilestone(t *testing.T) *mcpMilestone {
 		if name != "lookup" {
 			t.Error("wrong MCP tool name")
 		}
-		return json.RawMessage(fmt.Sprintf(`{"content":[{"type":"text","text":"Marker retrieved."}],"structuredContent":{"marker":%q,"action":"increment"}}`, h.marker)), nil
+		return json.RawMessage(fmt.Sprintf(`{"content":[{"type":"text","text":"Marker retrieved."}],"structuredContent":{"marker":%q}}`, h.marker)), nil
 	}}
 	server := httptest.NewServer(h.fixture)
 	t.Cleanup(server.Close)
@@ -59,7 +59,7 @@ func newMCPMilestone(t *testing.T) *mcpMilestone {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { h.runtime.Close() })
-	h.store, err = wasm.Load(context.Background(), "../../internal/state/wasm/testdata/state.json", runstate.Options{})
+	h.store, err = wasm.Load(context.Background(), "../../modules/mcp-tool-state/state.json", runstate.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func (c *milestoneNative) GenerateWithTools(ctx context.Context, request toolcal
 	}
 	for _, m := range request.Messages {
 		if m.Role == "tool" && strings.Contains(m.Text, c.h.marker) {
-			if string(c.h.store.Snapshot().Knowledge["counter"].Value) != "0" && strings.Contains(request.Instructions, `"counter"`) {
+			if c.h.storedMarker() == c.h.marker && strings.Contains(request.Instructions, c.h.marker) {
 				c.h.seenCommit = true
 			}
 		}
@@ -107,10 +107,8 @@ func (h *mcpMilestone) run(ctx context.Context, client openai.Client, key string
 	native := &milestoneNative{Client: observed, h: h, status: status}
 	provider := &loop.ToolProvider{Client: native, Observer: withState, Runtime: h.runtime, Store: h.store}
 	evaluate := func(_ context.Context, _ openai.Client, _, _ string, s loop.State) (GoalEvaluation, error) {
-		partition := h.store.Snapshot().Knowledge["counter"]
-		var counter int64
-		_ = json.Unmarshal(partition.Value, &counter)
-		achieved := h.seenCommit && !partition.Metadata.Stale && counter == h.fixture.Calls.Load() && counter > 0 && strings.Contains(s.Response, h.marker)
+		partition := h.store.Snapshot().Knowledge["mcp_tools"]
+		achieved := h.seenCommit && !partition.Metadata.Stale && partition.Metadata.Version == uint64(h.fixture.Calls.Load()) && h.fixture.Calls.Load() > 0 && h.storedMarker() == h.marker && strings.Contains(s.Response, h.marker)
 		rationale := "The retrieved marker has not been verified in the response and committed state."
 		if achieved {
 			rationale = "The retrieved marker was reported after an admitted MCP observation and validated WASM commit."
@@ -123,6 +121,9 @@ func (h *mcpMilestone) run(ctx context.Context, client openai.Client, key string
 type milestoneFake struct{ openai.Client }
 
 func (milestoneFake) GenerateWithTools(_ context.Context, r toolcall.Request) (toolcall.Response, error) {
+	if len(r.Tools) == 1 && r.Tools[0].Name == "grodt_manage_plan" {
+		return toolcall.Response{Calls: []toolcall.Call{{ID: "plan", Name: "grodt_manage_plan", Arguments: json.RawMessage(`{"action":"revise","plan":{"description":"Retrieve and report the fixture marker","revision":0,"status":"active","steps":[{"id":"lookup","description":"Retrieve and report the fixture marker","status":"pending"}]}}`)}}}, nil
+	}
 	for _, m := range r.Messages {
 		if m.Role == "tool" {
 			var out struct {
@@ -145,4 +146,20 @@ func TestMCPMilestoneThroughYAMLAndWASM(t *testing.T) {
 	if !h.seenCommit || !strings.Contains(h.output.String(), h.marker) || h.store.Snapshot().Intrinsic.GlobalCycle != 1 {
 		t.Fatal("MCP milestone not achieved inside one outer cycle")
 	}
+}
+
+func (h *mcpMilestone) storedMarker() string {
+	var value struct {
+		Sources map[string]map[string]struct {
+			Result struct {
+				Structured struct {
+					Marker string `json:"marker"`
+				} `json:"structuredContent"`
+			} `json:"result"`
+		} `json:"sources"`
+	}
+	if json.Unmarshal(h.store.Snapshot().Knowledge["mcp_tools"].Value, &value) != nil {
+		return ""
+	}
+	return value.Sources["unfamiliar"]["lookup"].Result.Structured.Marker
 }

@@ -7,7 +7,7 @@ import "time"
 const (
 	MaxServers        = 8
 	MaxDiscoveryPages = 32
-	MaxTools          = 128
+	MaxTools          = 256
 	MaxCatalogBytes   = 1 << 20
 	MaxBatchCalls     = 8
 	// MaxInvocations bounds a run independently of outer cycles, structured

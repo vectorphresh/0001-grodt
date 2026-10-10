@@ -166,6 +166,41 @@ func TestStartupFailureClosesEarlierSessions(t *testing.T) {
 		t.Fatalf("sessions not closed: %d", first.Closed.Load())
 	}
 }
+func TestCombinedCatalogToolLimit(t *testing.T) {
+	for _, count := range []int{205, MaxTools, MaxTools + 1} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			cfg := config.MCPConfig{}
+			for i, size := range []int{72, count - 72} {
+				tools := make([]map[string]any, size)
+				for j := range tools {
+					tools[j] = map[string]any{"name": fmt.Sprintf("tool_%d", j), "inputSchema": map[string]any{"type": "object"}}
+				}
+				raw, err := json.Marshal(tools)
+				if err != nil {
+					t.Fatal(err)
+				}
+				s := httptest.NewServer(&testmcp.Server{Tools: raw})
+				t.Cleanup(s.Close)
+				cfg.Servers = append(cfg.Servers, config.MCPServer{Name: fmt.Sprintf("server_%d", i), Transport: "http", URL: s.URL})
+			}
+			r, err := New(context.Background(), cfg)
+			if count > MaxTools {
+				if err == nil {
+					r.Close()
+					t.Fatal("accepted catalog exceeding tool limit")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { r.Close() })
+			if len(r.Tools()) != count {
+				t.Fatalf("got %d tools, want %d", len(r.Tools()), count)
+			}
+		})
+	}
+}
 func TestProtocolCancellationAndLimits(t *testing.T) {
 	t.Run("protocol", func(t *testing.T) {
 		f := &testmcp.Server{Tools: json.RawMessage(testmcp.Tools), Call: func(*http.Request, string, json.RawMessage) (json.RawMessage, error) {

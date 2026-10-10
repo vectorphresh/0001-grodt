@@ -87,6 +87,29 @@ mark it stale. No module failure/commit is automatically broadcast again.
 ## Host request extension
 
 The v1 exports, memory ownership, and fresh-instance lifecycle are unchanged.
+Optional `progress` may accompany `processed` or `mutation`. It replaces the
+owning partition's entire progress list atomically with a successful result;
+omission retains the list, and `[]` clears it. It is rejected on `ignored` or
+`error`. Existing results remain compatible.
+
+Each record has `id`, `task_id`, `kind` (`conclusion`, `completed_step`, `focus`),
+`status` (`established`, `unresolved`, `invalidated`), and an outcome `summary`.
+Optional `fact_reference` is a JSON pointer into the owning partition value.
+Facts and fixed references remain in that value; records describe established
+outcomes, never private reasoning, prior responses, or tool result copies.
+`task_id` must reference an existing task. Lists contain at most 32 records with
+unique IDs; summaries are at most 512 bytes, task IDs and references 256 bytes.
+The host stamps `knowledge_version`; modules must omit it or supply zero.
+
+Model projection includes only records scoped to active tasks. Records appear
+under `established_progress` or, for focus records, `active_focus`. Stale partition
+metadata or a changed partition version is reported separately as `freshness`
+(`stale` or `superseded`), without changing the module-declared procedural
+`status`. Version changes alone do not invalidate historical outcomes. Modules
+explicitly declare semantic invalidation and may reassert fresh observations
+when updating their value; the runtime interprets no domain semantics. Progress is
+journaled with the accepted module result and retained in full snapshots.
+
 Optional `requests` may accompany `ignored`, `processed`, or `mutation`, never
 `error`. Older modules remain compatible; older hosts reject the new field rather
 than silently dropping work. For example:
@@ -202,3 +225,13 @@ oversized output, malformed JSON, a prohibited import, bounded memory growth,
 and an invalid result envelope. `state.json`, `schema.json`, and `initial.json`
 form a runnable reference definition. This is one reference/test module, not a
 multi-language SDK or dynamic authoring toolchain.
+
+## Generic MCP tool state module
+
+`modules/mcp-tool-state/state.json` loads a generic latest-result partition using
+this unchanged v1 ABI. MCP events use `source: {"kind":"mcp","id":"<server name>"}`
+and `payload: {"tool":"<original name>","result":<accepted MCP result envelope>}`.
+The ordinary `task_id` and correlation retain invocation provenance. See the
+[module documentation](../modules/mcp-tool-state/README.md) for state shape,
+resource bounds, and the unresolved distinction between partition staleness and
+entry freshness.

@@ -16,6 +16,14 @@ type State struct {
 	Prompt    string
 	Context   []string
 	Response  string
+	// ObjectiveEvaluation is set only after the root evaluator confirms completion
+	// at a plan boundary. The outer loop consumes it without evaluating twice.
+	ObjectiveEvaluation *ObjectiveEvaluation
+}
+
+type ObjectiveEvaluation struct {
+	Achieved  bool
+	Rationale string
 }
 
 // Provider contributes context and falls through, handles the request, or fails.

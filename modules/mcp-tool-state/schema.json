@@ -1,0 +1,158 @@
+{
+  "type": "object",
+  "required": [
+    "sources"
+  ],
+  "properties": {
+    "sources": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "required": [
+            "sequence",
+            "timestamp",
+            "result"
+          ],
+          "properties": {
+            "sequence": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 18446744073709551615
+            },
+            "timestamp": {
+              "type": "string"
+            },
+            "correlation": {
+              "type": "object"
+            },
+            "result": {
+              "$ref": "#/$defs/mcpResult"
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "mcpResult": {
+      "type": "object",
+      "required": [
+        "content"
+      ],
+      "properties": {
+        "isError": {
+          "type": "boolean"
+        },
+        "structuredContent": {},
+        "content": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "type",
+                  "text"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "text"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type",
+                  "data",
+                  "mimeType"
+                ],
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "image",
+                      "audio"
+                    ]
+                  },
+                  "data": {
+                    "type": "string"
+                  },
+                  "mimeType": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type",
+                  "name",
+                  "uri"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "resource_link"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "uri": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type",
+                  "resource"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "resource"
+                  },
+                  "resource": {
+                    "type": "object",
+                    "required": [
+                      "uri"
+                    ],
+                    "properties": {
+                      "uri": {
+                        "type": "string"
+                      },
+                      "text": {
+                        "type": "string"
+                      },
+                      "blob": {
+                        "type": "string"
+                      }
+                    },
+                    "oneOf": [
+                      {
+                        "required": [
+                          "text"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "blob"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

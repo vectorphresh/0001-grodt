@@ -14,10 +14,18 @@ import (
 
 type structuredClient struct {
 	openai.Client
-	call func(context.Context, string, string, json.RawMessage, openai.JSONSpecification) (openai.JSONResult, error)
+	capture func(context.Context, string, string, json.RawMessage, openai.JSONSpecification) (openai.JSONResult, error)
+	call    func(context.Context, string, string, json.RawMessage, openai.JSONSpecification) (openai.JSONResult, error)
 }
 
 func (c structuredClient) PromptWithSpecification(ctx context.Context, i, p string, input json.RawMessage, s openai.JSONSpecification) (openai.JSONResult, error) {
+	if s.Name == "actor_plan_capture" {
+		if c.capture != nil {
+			return c.capture(ctx, i, p, input, s)
+		}
+		// Legacy fixtures model no new actor-declared plan at acquisition boundaries.
+		return openai.JSONResult{JSON: json.RawMessage(`{"capture_required":false,"rationale":"No additional declared plan in this fixture."}`)}, nil
+	}
 	return c.call(ctx, i, p, input, s)
 }
 func TestStructuredProviderAdmissionBoundary(t *testing.T) {
@@ -32,7 +40,7 @@ func TestStructuredProviderAdmissionBoundary(t *testing.T) {
 			schema := json.RawMessage(`{"type":"object","properties":{"action":{"const":"explore"}},"required":["action"],"additionalProperties":false}`)
 			raw := structuredClient{call: func(ctx context.Context, i, p string, input json.RawMessage, spec openai.JSONSpecification) (openai.JSONResult, error) {
 				calls++
-				if p != "prompt" || !strings.Contains(string(input), `"objective":"goal"`) || !strings.Contains(string(input), `"prior context"`) || !strings.Contains(i, "Complete current GRODT state") {
+				if p != "prompt" || !strings.Contains(string(input), `"objective":"goal"`) || !strings.Contains(string(input), `"prior context"`) || !strings.Contains(i, "Current actionable GRODT state") {
 					t.Fatal("missing original inputs/state")
 				}
 				if calls > 1 && !strings.Contains(i, "Structural validation feedback") {
@@ -61,7 +69,7 @@ func TestStructuredProviderAdmissionBoundary(t *testing.T) {
 				wantCalls = 2
 			}
 			if scenario == "exhausted" {
-				wantCalls = 3
+				wantCalls = 5
 			}
 			if calls != wantCalls || handled != (scenario == "corrected") || (err == nil) != (scenario == "corrected") {
 				t.Fatalf("calls=%d handled=%v err=%v", calls, handled, err)
