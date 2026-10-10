@@ -23,7 +23,7 @@ type GoalEvaluation struct {
 	Rationale string `json:"rationale"`
 }
 
-const evaluationInstructions = "Determine whether the original objective has been achieved using the supplied execution information. Set achieved=true only when the objective is satisfied by the current response. An intermediate step is not completion. Return the requested structured evaluation with a concise outcome rationale, not private reasoning."
+const evaluationInstructions = "Determine whether the original objective has been achieved using the supplied execution information and accepted state. Set achieved=true only when those observations establish the original objective, even if no final actor response has been written yet. Finishing a procedural plan is not by itself achievement of the objective. An intermediate step is not completion. Return the requested structured evaluation with a concise outcome rationale, not private reasoning."
 const evaluationSchema = `{"type":"object","properties":{"achieved":{"type":"boolean"},"rationale":{"type":"string"}},"required":["achieved","rationale"],"additionalProperties":false}`
 
 func evaluate(ctx context.Context, client openai.Client, objective, initial string, state loop.State) (out GoalEvaluation, opErr error) {
@@ -171,6 +171,16 @@ func runObjectiveWithEvaluator(ctx context.Context, objective, initial string, p
 		}
 	}()
 	history := []string{}
+	for _, provider := range providers {
+		if tools, ok := provider.(*loop.ToolProvider); ok {
+			previous := tools.CheckObjective
+			tools.CheckObjective = func(ctx context.Context, state loop.State) (loop.ObjectiveEvaluation, error) {
+				result, err := evaluator(ctx, client, objective, initial, state)
+				return loop.ObjectiveEvaluation{Achieved: result.Achieved, Rationale: result.Rationale}, err
+			}
+			defer func() { tools.CheckObjective = previous }()
+		}
+	}
 	for cycle := 1; cycle <= maxCycles; cycle++ {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -192,7 +202,13 @@ func runObjectiveWithEvaluator(ctx context.Context, objective, initial string, p
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		evaluation, err := evaluator(ctx, client, objective, initial, state)
+		var evaluation GoalEvaluation
+		var err error
+		if state.ObjectiveEvaluation != nil && state.ObjectiveEvaluation.Achieved {
+			evaluation = GoalEvaluation{Achieved: true, Rationale: state.ObjectiveEvaluation.Rationale}
+		} else {
+			evaluation, err = evaluator(ctx, client, objective, initial, state)
+		}
 		if err != nil {
 			return safeCycleError(ctx, err)
 		}

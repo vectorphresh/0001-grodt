@@ -103,7 +103,7 @@ func mustJSON(t *testing.T, v any) []byte {
 	}
 	return raw
 }
-func TestRejectedCompletionRemainsPartialAndChildLifecycle(t *testing.T) {
+func TestRejectedCompletionLeavesAcceptedPlanAndChildLifecycle(t *testing.T) {
 	ctx := context.Background()
 	p, fixture := toolsHarness(t, []runstate.Definition{{Name: "world", Schema: json.RawMessage(`{"type":"object"}`), Initial: json.RawMessage(`{"setting":"enabled"}`), Module: &eventModule{}}}, false)
 	p.Evaluator = structuredClient{call: func(context.Context, string, string, json.RawMessage, openai.JSONSpecification) (openai.JSONResult, error) {
@@ -115,16 +115,24 @@ func TestRejectedCompletionRemainsPartialAndChildLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	child, _ := p.Store.Active()
-	plan := *child.Plan
+	plan := runstate.Plan{Description: child.Objective, Status: "active"}
+	plan.Steps = []runstate.Step{{ID: "investigate", Description: "Investigate effect", Status: "pending"}}
+	if err := p.Store.RevisePlan(ctx, plan); err != nil {
+		t.Fatal(err)
+	}
+	plan.Revision++
+	plan.Steps[0].Status = "satisfied"
+	plan.Steps[0].Outcome = "Effect established"
+	plan.Steps[0].Evidence = []runstate.EvidenceReference{{Partition: "world", Path: "/setting"}}
 	plan.Status = "satisfied"
 	plan.Outcome = "Effect established"
 	plan.Evidence = []runstate.EvidenceReference{{Partition: "world", Version: 0, Path: "/setting"}}
-	_, message, err := p.managePlan(ctx, planCall(t, "claim", planCommand{Action: "revise", Plan: &plan}).Calls)
-	if err != nil || !strings.Contains(message, "not confirmed") {
-		t.Fatal(message, err)
+	_, _, err = p.managePlan(ctx, planCall(t, "claim", planCommand{Action: "revise", Plan: &plan}).Calls)
+	if err == nil || !strings.Contains(err.Error(), "not confirmed") {
+		t.Fatal(err)
 	}
 	child, _ = p.Store.Active()
-	if child.Plan.Status != "partial" || len(child.Plan.InformationGaps) != 1 {
+	if child.Plan.Status != "active" || len(child.Plan.InformationGaps) != 0 || child.Plan.Steps[0].Status != "pending" {
 		t.Fatal("unsupported completion accepted")
 	}
 	if _, _, err := p.managePlan(ctx, planCall(t, "complete", planCommand{Action: "complete_child"}).Calls); err == nil {
@@ -145,18 +153,27 @@ func TestRejectedCompletionRemainsPartialAndChildLifecycle(t *testing.T) {
 	}
 }
 
-func TestCompletionRejectionBoundsUnicodeGap(t *testing.T) {
+func TestCompletionRejectionBoundsUnicodeFeedbackWithoutDurableGap(t *testing.T) {
 	ctx := context.Background()
 	p, _ := toolsHarness(t, []runstate.Definition{{Name: "world", Schema: json.RawMessage(`{"type":"object"}`), Initial: json.RawMessage(`{"setting":"enabled"}`), Module: &eventModule{}}}, false)
 	p.Evaluator = structuredClient{call: func(context.Context, string, string, json.RawMessage, openai.JSONSpecification) (openai.JSONResult, error) {
 		return openai.JSONResult{JSON: mustJSON(t, map[string]any{"satisfied": false, "rationale": strings.Repeat("🙂", 140)})}, nil
 	}}
-	plan := runstate.Plan{Description: "Establish effect", Status: "satisfied", Outcome: "Effect exists", Steps: []runstate.Step{}, Evidence: []runstate.EvidenceReference{{Partition: "world", Version: 0, Path: "/setting"}}}
-	if _, _, err := p.managePlan(ctx, planCall(t, "claim", planCommand{Action: "revise", Plan: &plan}).Calls); err != nil {
+	plan := runstate.Plan{Description: "Establish effect", Status: "satisfied", Outcome: "Effect exists", Steps: []runstate.Step{{ID: "investigate", Description: "Investigate effect", Status: "pending"}}, Evidence: []runstate.EvidenceReference{{Partition: "world", Version: 0, Path: "/setting"}}}
+	initial := plan
+	initial.Status = "active"
+	if err := p.Store.RevisePlan(ctx, initial); err != nil {
+		t.Fatal(err)
+	}
+	plan.Revision = 1
+	plan.Steps[0].Status = "satisfied"
+	plan.Steps[0].Outcome = "Effect exists"
+	plan.Steps[0].Evidence = plan.Evidence
+	if _, _, err := p.managePlan(ctx, planCall(t, "claim", planCommand{Action: "revise", Plan: &plan}).Calls); err == nil || len(err.Error()) > 700 {
 		t.Fatal(err)
 	}
 	active, _ := p.Store.Active()
-	if active.Plan.Status != "partial" || len(active.Plan.InformationGaps[0]) > 512 {
+	if active.Plan.Status != "active" || len(active.Plan.InformationGaps) != 0 {
 		t.Fatal("unicode decision lost partial progress or exceeded summary budget")
 	}
 }

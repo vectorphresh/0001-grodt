@@ -35,6 +35,7 @@ func TestStateAwareReconciliationAccumulatedEvidenceAndFocus(t *testing.T) {
 		}
 	}}
 	p, _ := toolsHarness(t, []runstate.Definition{{Name: "world", Schema: json.RawMessage(`{"type":"object"}`), Initial: json.RawMessage(`{}`), Module: module}}, false)
+	seedProcedure(t, p, "setup", "Initial observations gathered")
 	for _, id := range []string{"first", "second"} {
 		if _, err := p.Store.Admit(ctx, runstate.Source{Kind: "mcp", ID: id}, json.RawMessage(`{}`)); err != nil {
 			t.Fatal(err)
@@ -68,7 +69,7 @@ func TestStateAwareReconciliationAccumulatedEvidenceAndFocus(t *testing.T) {
 		if spec.Name != "procedural_continuity_evaluation" || !strings.Contains(instructions, "partial or omitted sources") || strings.Count(string(raw), `"capacity":100`) != 1 {
 			t.Fatal("scope/completion evaluation missing or payload duplicated")
 		}
-		return openai.JSONResult{JSON: json.RawMessage(`{"continuity_valid":true,"satisfied":true,"rationale":"Current facts jointly support the retrospective outcome and unresolved intent."}`)}, nil
+		return openai.JSONResult{JSON: json.RawMessage(`{"continuity_valid":true,"purpose_preserved":true,"satisfied":true,"rationale":"Current facts jointly support the retrospective outcome and unresolved intent."}`)}, nil
 	}}
 	if err := p.reconcile(ctx, before, "Continue investigation", nil); err != nil {
 		t.Fatal(err)
@@ -85,7 +86,7 @@ func TestStateAwareReconciliationAccumulatedEvidenceAndFocus(t *testing.T) {
 		t.Fatal(err)
 	}
 	active, _ = p.Store.Active()
-	if active.Plan.Revision != 1 || evaluations != 2 {
+	if active.Plan.Revision != 2 || evaluations != 2 {
 		t.Fatal("unchanged reconciliation revised history or bypassed evaluation")
 	}
 }
@@ -94,6 +95,7 @@ func TestReconciliationScopeRejectionCorrectionAndAtomicity(t *testing.T) {
 	for _, mode := range []string{"strategy", "partial_exhaustive", "transport", "malformed_evaluation"} {
 		t.Run(mode, func(t *testing.T) {
 			p := reconciliationFixture(t)
+			seedProcedure(t, p, "evaluate", "Evaluate evidence")
 			before := p.Store.Snapshot()
 			focus := "Call indicator tools, choose an instrument and execute a strategy"
 			if mode == "partial_exhaustive" {
@@ -114,7 +116,7 @@ func TestReconciliationScopeRejectionCorrectionAndAtomicity(t *testing.T) {
 				if mode == "malformed_evaluation" {
 					return openai.JSONResult{JSON: json.RawMessage(`{}`)}, nil
 				}
-				return openai.JSONResult{JSON: json.RawMessage(`{"continuity_valid":false,"satisfied":true,"rationale":"Unsupported procedural inference."}`)}, nil
+				return openai.JSONResult{JSON: json.RawMessage(`{"continuity_valid":false,"purpose_preserved":true,"satisfied":true,"rationale":"Unsupported procedural inference."}`)}, nil
 			}}
 			if err := p.reconcile(context.Background(), before, "Evaluate available evidence", nil); err == nil {
 				t.Fatal("unsupported proposal accepted")
@@ -130,6 +132,7 @@ func TestReconciliationScopeRejectionCorrectionAndAtomicity(t *testing.T) {
 	}
 	// A rejected invented focus can be corrected to an honest no-progress result.
 	p := reconciliationFixture(t)
+	seedProcedure(t, p, "evaluate", "Evaluate evidence")
 	calls := 0
 	focus := "Call unrequested analytics"
 	p.Reconciler = structuredClient{call: func(_ context.Context, instructions, _ string, _ json.RawMessage, _ openai.JSONSpecification) (openai.JSONResult, error) {
@@ -146,14 +149,14 @@ func TestReconciliationScopeRejectionCorrectionAndAtomicity(t *testing.T) {
 	p.Evaluator = structuredClient{call: func(context.Context, string, string, json.RawMessage, openai.JSONSpecification) (openai.JSONResult, error) {
 		evaluations++
 		if evaluations == 1 {
-			return openai.JSONResult{JSON: json.RawMessage(`{"continuity_valid":false,"satisfied":false,"rationale":"Invented future action."}`)}, nil
+			return openai.JSONResult{JSON: json.RawMessage(`{"continuity_valid":false,"purpose_preserved":true,"satisfied":false,"rationale":"Invented future action."}`)}, nil
 		}
-		return openai.JSONResult{JSON: json.RawMessage(`{"continuity_valid":true,"satisfied":true,"rationale":"Retained state is consistent."}`)}, nil
+		return openai.JSONResult{JSON: json.RawMessage(`{"continuity_valid":true,"purpose_preserved":true,"satisfied":true,"rationale":"Retained state is consistent."}`)}, nil
 	}}
 	if err := p.reconcile(context.Background(), p.Store.Snapshot(), "Evaluate", nil); err != nil {
 		t.Fatal(err)
 	}
-	if active, _ := p.Store.Active(); active.Plan != nil || calls != 2 || evaluations != 2 {
+	if active, _ := p.Store.Active(); active.Plan.UnresolvedFocus != "" || calls != 2 || evaluations != 2 {
 		t.Fatal("rejected focus committed")
 	}
 }
@@ -224,6 +227,7 @@ func TestReconciliationEncodedInputBound(t *testing.T) {
 func TestReconciliationRejectedSatisfactionReplayAndTaskChange(t *testing.T) {
 	ctx := context.Background()
 	p := reconciliationFixture(t)
+	seedProcedure(t, p, "inspect", "Characterize observations")
 	if _, err := p.Store.Admit(ctx, runstate.Source{Kind: "mcp", ID: "read"}, json.RawMessage(`{}`)); err != nil {
 		t.Fatal(err)
 	}
@@ -234,15 +238,15 @@ func TestReconciliationRejectedSatisfactionReplayAndTaskChange(t *testing.T) {
 		return reconciliationResult(t, "progress", []progressUpdate{{Step: step}}, "inspect"), nil
 	}}
 	p.Evaluator = structuredClient{call: func(context.Context, string, string, json.RawMessage, openai.JSONSpecification) (openai.JSONResult, error) {
-		return openai.JSONResult{JSON: json.RawMessage(`{"continuity_valid":true,"satisfied":false,"rationale":"Evaluation remains incomplete."}`)}, nil
+		return openai.JSONResult{JSON: json.RawMessage(`{"continuity_valid":true,"purpose_preserved":true,"satisfied":false,"rationale":"Evaluation remains incomplete."}`)}, nil
 	}}
 	for i := 0; i < 2; i++ {
-		if err := p.reconcile(ctx, p.Store.Snapshot(), "Continue evaluation", nil); err != nil {
+		if err := p.reconcile(ctx, p.Store.Snapshot(), "Continue evaluation", nil); !errors.Is(err, errContinuityRejected) {
 			t.Fatal(err)
 		}
 	}
 	active, _ := p.Store.Active()
-	if active.Plan.Revision != 1 || active.Plan.Steps[0].Status != "partial" || active.Plan.CurrentStep != "inspect" {
+	if active.Plan.Revision != 1 || active.Plan.Steps[0].Status != "pending" || active.Plan.CurrentStep != "inspect" {
 		t.Fatal("repeated rejection grew plan or lost unresolved focus")
 	}
 	// The evaluator cannot cause a proposal to commit to a different active task.
@@ -250,7 +254,7 @@ func TestReconciliationRejectedSatisfactionReplayAndTaskChange(t *testing.T) {
 		if _, err := p.Store.Push(ctx, "Different task", ""); err != nil {
 			t.Fatal(err)
 		}
-		return openai.JSONResult{JSON: json.RawMessage(`{"continuity_valid":true,"satisfied":true,"rationale":"Supported."}`)}, nil
+		return openai.JSONResult{JSON: json.RawMessage(`{"continuity_valid":true,"purpose_preserved":true,"satisfied":true,"rationale":"Supported."}`)}, nil
 	}}
 	if err := p.reconcile(ctx, p.Store.Snapshot(), "Continue", nil); err == nil {
 		t.Fatal("task change during evaluation ignored")

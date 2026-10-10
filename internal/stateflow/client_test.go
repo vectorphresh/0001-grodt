@@ -72,7 +72,7 @@ func TestAdmissionAfterCorrections(t *testing.T) {
 		accepted  bool
 	}{
 		{"corrected", []string{`{"sample":42}`, `{"sample":"ok"}`}, 2, true},
-		{"exhausted", []string{`{"sample":42}`}, 3, false},
+		{"exhausted", []string{`{"sample":42}`}, 5, false},
 		{"malformed", []string{`{`}, 1, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

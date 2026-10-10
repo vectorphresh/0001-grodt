@@ -13,7 +13,7 @@ import (
 )
 
 func TestCatalogPagingContinuation(t *testing.T) {
-	p, f := toolsHarness(t, nil, false)
+	p, f := toolsExecutionHarness(t, nil, false)
 	tools := make([]map[string]any, 205)
 	for i := range tools {
 		tools[i] = map[string]any{"name": fmt.Sprintf("tool_%d", i), "inputSchema": map[string]any{"type": "object"}}

@@ -14,10 +14,11 @@ import (
 )
 
 type terminalStatus struct {
-	writer    io.Writer
-	trace     bool
-	key       string
-	artifacts *inferenceTrace
+	writer     io.Writer
+	trace      bool
+	key        string
+	artifacts  *inferenceTrace
+	milestones *milestoneReporter
 }
 
 func (s *terminalStatus) log(format string, args ...any) error {
@@ -59,6 +60,11 @@ func (m *runMetrics) add(u *openai.Usage) {
 	m.TotalTokens += u.TotalTokens
 }
 func reportRun(s *terminalStatus, objective, outcome, rationale string, m runMetrics) error {
+	if s != nil {
+		if err := s.milestones.drain(); err != nil {
+			return err
+		}
+	}
 	if rationale == "" {
 		rationale = "unavailable"
 	}
@@ -80,11 +86,15 @@ func reportRun(s *terminalStatus, objective, outcome, rationale string, m runMet
 // shared by generation and evaluation; all calls are synchronous.
 type observedClient struct {
 	openai.Client
-	status  *terminalStatus
-	metrics *runMetrics
+	status     *terminalStatus
+	metrics    *runMetrics
+	milestones *milestoneReporter
 }
 
 func (c observedClient) Prompt(ctx context.Context, prompt string) (openai.TextResult, error) {
+	if err := c.milestones.drain(); err != nil {
+		return openai.TextResult{}, err
+	}
 	if c.status != nil && c.status.trace {
 		if err := c.status.log("Outgoing generation prompt:\n%s\n--- end prompt ---", prompt); err != nil {
 			return openai.TextResult{}, err
@@ -107,6 +117,9 @@ func (c observedClient) Prompt(ctx context.Context, prompt string) (openai.TextR
 	return result, err
 }
 func (c observedClient) RequestMutation(ctx context.Context, instructions string, state, observation json.RawMessage, spec openai.JSONSpecification) (openai.JSONResult, error) {
+	if err := c.milestones.drain(); err != nil {
+		return openai.JSONResult{}, err
+	}
 	if c.status != nil && c.status.trace {
 		if err := c.status.log("Outgoing evaluation:\nInstructions: %s\nState: %s\nObservation: %s\nSchema: %s", instructions, state, observation, spec.Schema); err != nil {
 			return openai.JSONResult{}, err
@@ -139,6 +152,9 @@ func (c observedClient) finished(operation string, start time.Time, err error) e
 // Structured generation uses the same accounting and redacted progress channel
 // as ordinary generation. The provider owns validation/admission, not this wrapper.
 func (c observedClient) PromptWithSpecification(ctx context.Context, instructions, prompt string, input json.RawMessage, spec openai.JSONSpecification) (openai.JSONResult, error) {
+	if err := c.milestones.drain(); err != nil {
+		return openai.JSONResult{}, err
+	}
 	if err := c.status.log("Structured generation request in progress..."); err != nil {
 		return openai.JSONResult{}, err
 	}
@@ -157,6 +173,9 @@ func (c observedClient) PromptWithSpecification(ctx context.Context, instruction
 }
 
 func (c observedClient) GenerateWithTools(ctx context.Context, request toolcall.Request) (toolcall.Response, error) {
+	if err := c.milestones.drain(); err != nil {
+		return toolcall.Response{}, err
+	}
 	client, ok := c.Client.(toolcall.Client)
 	if !ok {
 		return toolcall.Response{}, errors.New("LLM client does not support tools")

@@ -110,6 +110,34 @@ func (s *Store) Journal() []Entry {
 	_ = json.Unmarshal(encode(s.journal), &out)
 	return out
 }
+
+// JournalSince copies only selected entries newer than after, and returns the
+// cursor for all inspected entries. Plan revisions project only the accepted
+// plan; archived task inputs/results remain in Journal. Callers serialize access.
+func (s *Store) JournalSince(after uint64, kinds ...string) ([]Entry, uint64) {
+	selected := make(map[string]bool, len(kinds))
+	for _, kind := range kinds {
+		selected[kind] = true
+	}
+	var entries []Entry
+	// Sequence numbers are contiguous and start at one.
+	for i := after; i < uint64(len(s.journal)); i++ {
+		entry := s.journal[i]
+		if selected[entry.Kind] {
+			if entry.Kind == "task_plan_revised" {
+				var projection struct {
+					Plan json.RawMessage `json:"plan"`
+				}
+				_ = json.Unmarshal(entry.Data, &projection)
+				entry.Data = encode(projection)
+			} else {
+				entry.Data = bytes.Clone(entry.Data)
+			}
+			entries = append(entries, entry)
+		}
+	}
+	return entries, s.snapshot.Intrinsic.JournalSequence
+}
 func (s *Store) appendEntry(entry Entry) {
 	s.snapshot.Intrinsic.JournalSequence++
 	entry.Sequence = s.snapshot.Intrinsic.JournalSequence
@@ -281,9 +309,43 @@ func (s *Store) fail(name string, e Event, kind, code string) {
 }
 
 // Diagnostic records a host-selected outcome without broadcasting a new event.
-func (s *Store) Diagnostic(code string) {
-	if code != "operation_cancelled" {
+func (s *Store) Diagnostic(code string, attempt ...int) {
+	switch code {
+	case "operation_cancelled", "exclusive_host_correction_started", "exclusive_host_correction_rejected", "exclusive_host_correction_accepted", "exclusive_host_correction_exhausted", "exclusive_host_correction_unusable", "exclusive_host_operations_ambiguous", "reconciliation_correction_requested", "tool_recovery_response", "tool_recovery_exhausted", "tool_recovery_completed", "planning_proposal_rejected", "planning_correction_exhausted", "actor_plan_capture_requested", "standalone_plan_correction_started", "plan_initialization_required", "plan_renewal_required":
+	default:
 		code = "operation_failed"
 	}
-	s.appendEntry(Entry{Kind: "runtime_failure", Data: encode(map[string]string{"code": code})})
+	data := map[string]any{"code": code}
+	if len(attempt) > 0 && attempt[0] > 0 && attempt[0] <= 10 {
+		data["attempt"] = attempt[0]
+	}
+	s.appendEntry(Entry{Kind: "runtime_failure", Data: encode(data)})
+}
+
+// RecordToolRecovery retains a bounded host-authored failure summary, never a
+// tool payload. It is a diagnostic, not admission or procedural progress.
+func (s *Store) RecordToolRecovery(summary json.RawMessage) {
+	if len(summary) <= 2048 && json.Valid(summary) {
+		s.appendEntry(Entry{Kind: "tool_recovery_requested", Data: bytes.Clone(summary)})
+	}
+}
+
+// RecordPlanningStage records host processing boundaries, not model proposals.
+func (s *Store) RecordPlanningStage(taskID, action, status, reason string) {
+	switch action {
+	case "revise", "create_child", "complete_child", "abandon_child":
+	default:
+		action = "unknown"
+	}
+	if status != "started" && status != "accepted" && status != "rejected" {
+		return
+	}
+	if len(reason) > 512 {
+		reason = reason[:512]
+	}
+	s.appendEntry(Entry{Kind: "planning_stage", TaskID: taskID, Data: encode(struct {
+		Action string `json:"action"`
+		Status string `json:"status"`
+		Reason string `json:"reason,omitempty"`
+	}{action, status, reason})})
 }

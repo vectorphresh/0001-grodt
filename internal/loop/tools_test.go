@@ -24,7 +24,7 @@ import (
 type nativeClient func(context.Context, toolcall.Request) (toolcall.Response, error)
 
 func TestToolContinuationProjectsLatestExchange(t *testing.T) {
-	p, _ := toolsHarness(t, nil, false)
+	p, _ := toolsExecutionHarness(t, nil, false)
 	requests := 0
 	p.Client = nativeClient(func(_ context.Context, r toolcall.Request) (toolcall.Response, error) {
 		requests++
@@ -94,10 +94,29 @@ func toolsHarness(t *testing.T, definitions []runstate.Definition, allowHTTP boo
 	if err = store.BeginCycle(ctx); err != nil {
 		t.Fatal(err)
 	}
-	return &ToolProvider{Runtime: runtime, Store: store, Observer: &stateflow.Client{Store: store}}, fixture
+	return &ToolProvider{Runtime: runtime, Store: store, Observer: &stateflow.Client{Store: store}, CheckObjective: func(context.Context, State) (ObjectiveEvaluation, error) {
+		return ObjectiveEvaluation{Rationale: "Fixture objective remains incomplete."}, nil
+	}}, fixture
+}
+
+// Execution fixtures enter with a previously accepted procedure. Plan-specific
+// fixtures use toolsHarness to exercise initialization explicitly.
+func toolsExecutionHarness(t *testing.T, definitions []runstate.Definition, allowHTTP bool) (*ToolProvider, *testmcp.Server) {
+	p, fixture := toolsHarness(t, definitions, allowHTTP)
+	if err := p.Store.RevisePlan(context.Background(), initialCorrectionPlan()); err != nil {
+		t.Fatal(err)
+	}
+	return p, fixture
 }
 func toolRequest(r toolcall.Request, id string) toolcall.Call {
-	return toolcall.Call{ID: id, Name: r.Tools[0].Name, Arguments: json.RawMessage(`{"key":"sample"}`)}
+	name := "grodt_tool_001" // Deliberate bypass attempts when only planning is advertised.
+	for _, tool := range r.Tools {
+		if tool.Name != planningTool {
+			name = tool.Name
+			break
+		}
+	}
+	return toolcall.Call{ID: id, Name: name, Arguments: json.RawMessage(`{"key":"sample"}`)}
 }
 func TestToolContinuationIndependentOfStateConsumption(t *testing.T) {
 	for _, mode := range []string{"none", "ignored", "processed", "mutation", "error"} {
@@ -119,7 +138,7 @@ func TestToolContinuationIndependentOfStateConsumption(t *testing.T) {
 					defs = append(defs, runstate.Definition{Name: fmt.Sprintf("part%d", i), Schema: json.RawMessage(`{"type":"integer"}`), Initial: json.RawMessage(`0`), Module: m})
 				}
 			}
-			p, f := toolsHarness(t, defs, false)
+			p, f := toolsExecutionHarness(t, defs, false)
 			requests := 0
 			p.Client = nativeClient(func(_ context.Context, r toolcall.Request) (toolcall.Response, error) {
 				requests++
@@ -215,7 +234,7 @@ func TestMCPResultThroughRealWASM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, _ := toolsHarness(t, []runstate.Definition{{Name: "counter", Schema: json.RawMessage(`{"type":"integer"}`), Initial: json.RawMessage(`0`), Module: module}}, false)
+	p, _ := toolsExecutionHarness(t, []runstate.Definition{{Name: "counter", Schema: json.RawMessage(`{"type":"integer"}`), Initial: json.RawMessage(`0`), Module: module}}, false)
 	requests := 0
 	p.Client = nativeClient(func(_ context.Context, r toolcall.Request) (toolcall.Response, error) {
 		requests++
@@ -235,7 +254,7 @@ func TestMCPResultThroughRealWASM(t *testing.T) {
 	}
 }
 func TestToolBatchFailsBeforeAnyDispatchOrTask(t *testing.T) {
-	p, f := toolsHarness(t, nil, false)
+	p, f := toolsExecutionHarness(t, nil, false)
 	c := toolcall.Call{ID: "earlier", Name: p.Runtime.Tools()[0].Name, Arguments: json.RawMessage(`{"key":"sample"}`)}
 	for i := 0; i < mcp.MaxInvocations-1; i++ {
 		if _, err := p.Runtime.Invoke(context.Background(), c); err != nil {
@@ -285,7 +304,7 @@ func TestMCPObservationHTTPChainAndTerminalRetention(t *testing.T) {
 				return json.RawMessage(`{"status":"ignored"}`)
 			}}
 			defs := []runstate.Definition{{Name: "requester", Schema: json.RawMessage(`true`), Initial: json.RawMessage(`{}`), Module: requester}, {Name: "watcher", Schema: json.RawMessage(`true`), Initial: json.RawMessage(`{}`), Module: watcher}}
-			p, f := toolsHarness(t, defs, true)
+			p, f := toolsExecutionHarness(t, defs, true)
 			requests := 0
 			p.Client = nativeClient(func(_ context.Context, r toolcall.Request) (toolcall.Response, error) {
 				requests++
@@ -321,7 +340,7 @@ func TestMCPObservationHTTPChainAndTerminalRetention(t *testing.T) {
 	}
 }
 func TestToolFailureStopsSiblingsAndRejectsInvalidObservation(t *testing.T) {
-	p, f := toolsHarness(t, nil, false)
+	p, f := toolsExecutionHarness(t, nil, false)
 	f.Call = func(*http.Request, string, json.RawMessage) (json.RawMessage, error) {
 		return nil, errors.New("protocol failure")
 	}
@@ -330,11 +349,11 @@ func TestToolFailureStopsSiblingsAndRejectsInvalidObservation(t *testing.T) {
 	})
 	if _, err := p.Handle(context.Background(), &State{Objective: "objective"}); err == nil {
 		t.Fatal("protocol failure accepted")
-	} else if err.Error() != "tool operation failed during tool invocation and result validation" {
+	} else if err.Error() != "tool operation failed during tool invocation recovery exhausted (tool_protocol_or_transport_failure)" {
 		t.Fatalf("missing safe failure stage: %v", err)
 	}
-	if f.Calls.Load() != 1 {
-		t.Fatal("dispatched later sibling")
+	if f.Calls.Load() != 3 {
+		t.Fatal("wrong recovery opportunities or dispatched later sibling")
 	}
 	for _, entry := range p.Store.Journal() {
 		if entry.Kind == "event_admitted" && strings.Contains(string(entry.Data), `"kind":"mcp"`) {
@@ -344,7 +363,7 @@ func TestToolFailureStopsSiblingsAndRejectsInvalidObservation(t *testing.T) {
 }
 
 func TestToolFailureStagePreservesCauseWithoutExposingIt(t *testing.T) {
-	p, _ := toolsHarness(t, nil, false)
+	p, _ := toolsExecutionHarness(t, nil, false)
 	cause := errors.New("private-provider-error")
 	p.Client = nativeClient(func(context.Context, toolcall.Request) (toolcall.Response, error) {
 		return toolcall.Response{}, cause
@@ -365,7 +384,7 @@ func TestToolFailureStagePreservesCauseWithoutExposingIt(t *testing.T) {
 }
 
 func TestToolExecutionErrorRemainsAvailableToReasoning(t *testing.T) {
-	p, f := toolsHarness(t, nil, false)
+	p, f := toolsExecutionHarness(t, nil, false)
 	f.Call = func(*http.Request, string, json.RawMessage) (json.RawMessage, error) {
 		return json.RawMessage(`{"content":[{"type":"text","text":"resource unavailable"}],"isError":true}`), nil
 	}

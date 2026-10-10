@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -113,7 +114,7 @@ func (s *Store) CheckPlan(plan Plan) error {
 	if !ok || t.AgentWork != nil || t.Work != nil {
 		return errors.New("no active reasoning task")
 	}
-	if !boundedText(plan.UnresolvedFocus, false) || !boundedText(plan.Description, true) || !boundedText(plan.CompletionCriteria, false) || !boundedText(plan.Outcome, false) || !validPlanStatus(plan.Status) || !validGaps(plan.InformationGaps) || len(plan.Steps) > 32 || len(plan.Evidence) > 8 {
+	if !boundedText(plan.UnresolvedFocus, false) || !boundedText(plan.Description, true) || !boundedText(plan.CompletionCriteria, false) || !boundedText(plan.Outcome, false) || !validPlanStatus(plan.Status) || !validGaps(plan.InformationGaps) || len(plan.Steps) == 0 || len(plan.Steps) > 32 || len(plan.Evidence) > 8 {
 		return errors.New("invalid or oversized plan")
 	}
 	expected := uint64(0)
@@ -126,7 +127,22 @@ func (s *Store) CheckPlan(plan Plan) error {
 	if t.Plan != nil && (t.Plan.Status == "satisfied" || t.Plan.Status == "invalidated") {
 		comparison := plan
 		comparison.Status = t.Plan.Status
-		if !reflect.DeepEqual(comparison, *t.Plan) || (plan.Status != t.Plan.Status && plan.Status != "invalidated") {
+		// A completed procedural phase may reopen for new actor-authored work.
+		// Prior plan revisions remain in the journal; the step checks below
+		// protect completed history in the renewed current procedure.
+		renewal := false
+		if plan.Status == "active" || plan.Status == "partial" {
+			oldIDs := map[string]bool{}
+			for _, step := range t.Plan.Steps {
+				oldIDs[step.ID] = true
+			}
+			for _, step := range plan.Steps {
+				if !oldIDs[step.ID] && (step.Status == "pending" || step.Status == "active" || step.Status == "partial") {
+					renewal = true
+				}
+			}
+		}
+		if !renewal && (!reflect.DeepEqual(comparison, *t.Plan) || (plan.Status != t.Plan.Status && plan.Status != "invalidated")) {
 			return errors.New("completed plan is immutable; invalidate or create a new intent")
 		}
 	}
@@ -156,6 +172,9 @@ func (s *Store) CheckPlan(plan Plan) error {
 			return errors.New("invalid or duplicate step")
 		}
 		seen[step.ID] = true
+		if step.Status == "pending" && len(step.Evidence) > 0 {
+			return fmt.Errorf("step %q has collected evidence and cannot remain pending. Set status to active for started work, partial for an established outcome with a specific unresolved requirement, or satisfied only when evidence supports completion", step.ID)
+		}
 		if prev, exists := old[step.ID]; exists && (prev.Status == "satisfied" || prev.Status == "invalidated") {
 			comparison := step
 			comparison.Status = prev.Status
@@ -181,7 +200,7 @@ func (s *Store) CheckPlan(plan Plan) error {
 		for _, step := range plan.Steps {
 			if step.ID == plan.CurrentStep {
 				found = true
-				if step.Status == "satisfied" || step.Status == "failed" {
+				if !StepUnresolved(step) {
 					return errors.New("current step must be unresolved")
 				}
 			}
@@ -206,12 +225,15 @@ func (s *Store) RevisePlan(ctx context.Context, plan Plan) error {
 	if err := s.check(ctx); err != nil {
 		return err
 	}
+	active, _ := s.Active()
+	plan.NormalizeCurrentStep(active.Plan)
 	if err := s.CheckPlan(plan); err != nil {
 		return err
 	}
 	tasks := s.Snapshot().Tasks
 	id := tasks.Stack[len(tasks.Stack)-1]
 	t := tasks.Records[id]
+	plan.AdvanceCurrentStep()
 	plan.Revision++
 	var owned Plan
 	if err := json.Unmarshal(encode(plan), &owned); err != nil {
@@ -271,4 +293,42 @@ func (s *Store) RecordReconciliation(taskID string, evidence, proposed json.RawM
 		Proposed json.RawMessage `json:"proposed_changes"`
 		Error    string          `json:"error,omitempty"`
 	}{evidence, proposed, code})})
+}
+
+// StepUnresolved identifies work that can still advance the procedure.
+func StepUnresolved(step Step) bool {
+	return step.Status == "pending" || step.Status == "active" || step.Status == "partial"
+}
+
+// AdvanceCurrentStep preserves an actionable selection, otherwise follows accepted order.
+func (plan *Plan) AdvanceCurrentStep() {
+	for _, step := range plan.Steps {
+		if step.ID == plan.CurrentStep && StepUnresolved(step) {
+			return
+		}
+	}
+	plan.CurrentStep = ""
+	for _, step := range plan.Steps {
+		if StepUnresolved(step) {
+			plan.CurrentStep = step.ID
+			return
+		}
+	}
+}
+
+// NormalizeCurrentStep advances a retained selection when its work becomes terminal.
+// A newly supplied invalid selection remains invalid and is rejected by CheckPlan.
+func (plan *Plan) NormalizeCurrentStep(previous *Plan) {
+	if plan.CurrentStep == "" {
+		plan.AdvanceCurrentStep()
+		return
+	}
+	if previous != nil && plan.CurrentStep == previous.CurrentStep {
+		for _, step := range plan.Steps {
+			if step.ID == plan.CurrentStep && !StepUnresolved(step) {
+				plan.AdvanceCurrentStep()
+				return
+			}
+		}
+	}
 }

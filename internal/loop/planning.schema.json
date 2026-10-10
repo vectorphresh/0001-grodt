@@ -6,7 +6,8 @@
         "revise",
         "create_child",
         "complete_child",
-        "abandon_child"
+        "abandon_child",
+        "patch"
       ]
     },
     "plan": {
@@ -152,7 +153,8 @@
             ],
             "additionalProperties": false
           },
-          "maxItems": 32
+          "maxItems": 32,
+          "minItems": 1
         },
         "current_step": {
           "type": "string",
@@ -179,6 +181,272 @@
     "completion_criteria": {
       "type": "string",
       "maxLength": 512
+    },
+    "revision_reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "patch": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "add_steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "description": {
+                "type": "string",
+                "maxLength": 512,
+                "minLength": 1
+              },
+              "completion_criteria": {
+                "type": "string",
+                "maxLength": 512
+              },
+              "status": {
+                "enum": [
+                  "pending",
+                  "active",
+                  "partial",
+                  "satisfied",
+                  "invalidated",
+                  "failed"
+                ]
+              },
+              "outcome": {
+                "type": "string",
+                "maxLength": 512
+              },
+              "evidence_refs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "partition": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "path": {
+                      "type": "string",
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "partition",
+                    "version",
+                    "path"
+                  ],
+                  "additionalProperties": false
+                },
+                "maxItems": 8
+              },
+              "information_gaps": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 512,
+                  "minLength": 1
+                },
+                "maxItems": 8
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": [
+              "id",
+              "description",
+              "status"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 8
+        },
+        "step_updates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "description": {
+                "type": "string",
+                "maxLength": 512,
+                "minLength": 1
+              },
+              "completion_criteria": {
+                "type": "string",
+                "maxLength": 512
+              },
+              "status": {
+                "enum": [
+                  "pending",
+                  "active",
+                  "partial",
+                  "satisfied",
+                  "invalidated",
+                  "failed"
+                ]
+              },
+              "outcome": {
+                "type": "string",
+                "maxLength": 512
+              },
+              "evidence_refs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "partition": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "path": {
+                      "type": "string",
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "partition",
+                    "version",
+                    "path"
+                  ],
+                  "additionalProperties": false
+                },
+                "maxItems": 8
+              },
+              "information_gaps": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 512,
+                  "minLength": 1
+                },
+                "maxItems": 8
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": [
+              "id"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 8
+        },
+        "remove_steps": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "maxItems": 8
+        },
+        "unresolved_order": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "maxItems": 32
+        },
+        "plan_updates": {
+          "type": "object",
+          "properties": {
+            "description": {
+              "type": "string",
+              "maxLength": 512,
+              "minLength": 1
+            },
+            "completion_criteria": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "status": {
+              "enum": [
+                "pending",
+                "active",
+                "partial",
+                "satisfied",
+                "invalidated",
+                "failed"
+              ]
+            },
+            "outcome": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "evidence_refs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "partition": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "version": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "path": {
+                    "type": "string",
+                    "maxLength": 256
+                  }
+                },
+                "required": [
+                  "partition",
+                  "version",
+                  "path"
+                ],
+                "additionalProperties": false
+              },
+              "maxItems": 8
+            },
+            "information_gaps": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 512,
+                "minLength": 1
+              },
+              "maxItems": 8
+            },
+            "current_step": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "unresolved_focus": {
+              "type": "string",
+              "maxLength": 512
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "revision"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [

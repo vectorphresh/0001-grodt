@@ -272,7 +272,7 @@ func (r *Runtime) Preflight(ctx context.Context, calls []toolcall.Call) error {
 		}
 		result, err := validation.New().Validate(ctx, t.InputSchema, c.Arguments)
 		if err != nil || !result.Valid {
-			return safeError(ctx, "tool arguments violate schema")
+			return invocationFailure(ctx, "tool_arguments_schema_violation", "not_dispatched", nil, result.Details)
 		}
 	}
 	return nil
@@ -289,38 +289,59 @@ func (r *Runtime) Invoke(ctx context.Context, c toolcall.Call) (Outcome, error) 
 		return Outcome{}, err
 	}
 	r.invocations++
+	s.wire.reset()
 	result, err := s.client.CallTool(callCtx, &sdk.CallToolParams{Name: t.Name, Arguments: c.Arguments})
-	if err != nil {
-		return Outcome{}, safeError(callCtx, "tool protocol or transport failure")
+	if observed, overflow := s.wire.overflow(); overflow {
+		return Outcome{}, invocationFailure(ctx, "wire_response_too_large", "result_rejected", map[string]int{"observed_bytes_at_least": observed, "limit_bytes": MaxWireBytes}, nil)
 	}
-	raw, err := s.wire.result()
-	if err != nil || len(raw) > MaxResultBytes || r.containsSensitive(raw) || result.NeedsInput() {
-		return Outcome{}, safeError(callCtx, "unusable tool result")
+	raw, wireErr := s.wire.result()
+	if len(raw) > 0 && r.containsSensitive(raw) {
+		return Outcome{}, errors.New("mcp: sensitive connection value in tool result")
+	}
+	if err != nil {
+		if len(raw) > 0 {
+			validationResult, _ := validation.New().Validate(callCtx, resultSchema, raw)
+			return Outcome{}, invocationFailure(ctx, "malformed_tool_result", "result_rejected", nil, validationResult.Details)
+		}
+		category := "tool_protocol_or_transport_failure"
+		if callCtx.Err() != nil {
+			category = "invocation_timeout"
+		}
+		return Outcome{}, invocationFailure(ctx, category, "outcome_unknown", nil, nil)
+	}
+	if wireErr != nil {
+		return Outcome{}, invocationFailure(ctx, "missing_tool_result", "outcome_unknown", nil, nil)
+	}
+	if len(raw) > MaxResultBytes {
+		return Outcome{}, invocationFailure(ctx, "result_too_large", "result_rejected", map[string]int{"observed_bytes": len(raw), "limit_bytes": MaxResultBytes}, nil)
+	}
+	if result.NeedsInput() {
+		return Outcome{}, invocationFailure(ctx, "unsupported_input_request", "result_rejected", nil, nil)
 	}
 	checked, checkErr := validation.New().Validate(callCtx, resultSchema, raw)
 	if checkErr != nil || !checked.Valid {
-		return Outcome{}, safeError(callCtx, "malformed tool result")
+		return Outcome{}, invocationFailure(ctx, "malformed_tool_result", "result_rejected", nil, checked.Details)
 	}
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(raw, &fields) != nil {
-		return Outcome{}, errors.New("mcp: invalid result object")
+		return Outcome{}, invocationFailure(ctx, "invalid_result_object", "result_rejected", nil, nil)
 	}
 	var content []json.RawMessage
 	if json.Unmarshal(fields["content"], &content) != nil || content == nil {
-		return Outcome{}, errors.New("mcp: invalid result content")
+		return Outcome{}, invocationFailure(ctx, "invalid_result_content", "result_rejected", nil, nil)
 	}
 	// SDK validates content union kinds; retain every original block unchanged.
 	if len(content) != len(result.Content) {
-		return Outcome{}, errors.New("mcp: invalid content blocks")
+		return Outcome{}, invocationFailure(ctx, "invalid_content_blocks", "result_rejected", map[string]int{"wire_blocks": len(content), "decoded_blocks": len(result.Content)}, nil)
 	}
 	out := Outcome{Server: t.Server, Tool: t.Name, Content: fields["content"], StructuredContent: fields["structuredContent"], IsError: result.IsError}
 	if !out.IsError && len(t.OutputSchema) > 0 {
 		if len(out.StructuredContent) == 0 {
-			return Outcome{}, errors.New("mcp: missing structured output")
+			return Outcome{}, invocationFailure(ctx, "missing_structured_output", "result_rejected", nil, nil)
 		}
 		v, e := validation.New().Validate(callCtx, t.OutputSchema, out.StructuredContent)
 		if e != nil || !v.Valid {
-			return Outcome{}, safeError(callCtx, "tool output violates schema")
+			return Outcome{}, invocationFailure(ctx, "output_schema_violation", "result_rejected", nil, v.Details)
 		}
 	}
 	return out, nil

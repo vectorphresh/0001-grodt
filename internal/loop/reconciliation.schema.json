@@ -34,7 +34,8 @@
                   "satisfied",
                   "invalidated",
                   "failed"
-                ]
+                ],
+                "description": "pending: not started. active: underway. partial: supported progress with work remaining. satisfied: completion supported by accepted evidence, with an outcome and no unresolved gaps. failed: work ended unsuccessfully. invalidated: prior intent or progress is no longer valid; do not use for incomplete work."
               },
               "outcome": {
                 "type": "string",
@@ -115,13 +116,59 @@
       ],
       "maxLength": 512,
       "description": "null preserves focus; empty string clears it; otherwise concise unresolved intent, never a new strategy or tool sequence."
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "description": "Explain supported progress, or why no additional step progress is supported and retained state remains accurate."
+    },
+    "result_accounting": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "properties": {
+          "result_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "step_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "disposition": {
+            "enum": [
+              "update",
+              "no_progress"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        },
+        "required": [
+          "result_id",
+          "step_id",
+          "disposition",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Account for every accepted_results ID exactly once relative to a visible accepted step. update requires a matching supported step update; no_progress requires a reason the retained step state remains accurate."
     }
   },
   "required": [
     "action",
     "updates",
     "current_step",
-    "unresolved_focus"
+    "unresolved_focus",
+    "reason",
+    "result_accounting"
   ],
   "additionalProperties": false
 }

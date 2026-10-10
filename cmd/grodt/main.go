@@ -173,16 +173,23 @@ func execute(ctx context.Context, objective, initial string, client openai.Clien
 func executeWithState(ctx context.Context, objective, initial string, client openai.Client, output io.Writer, status *terminalStatus, store *runstate.Store) error {
 	return executeWithCapabilities(ctx, objective, initial, client, output, status, store, nil)
 }
-func executeWithCapabilities(ctx context.Context, objective, initial string, client openai.Client, output io.Writer, status *terminalStatus, store *runstate.Store, capabilities *mcp.Runtime) error {
+func executeWithCapabilities(ctx context.Context, objective, initial string, client openai.Client, output io.Writer, status *terminalStatus, store *runstate.Store, capabilities *mcp.Runtime) (runErr error) {
 	metrics := runMetrics{}
-	observed := observedClient{Client: client, status: status, metrics: &metrics}
+	milestones := &milestoneReporter{store: store, status: status}
+	if status != nil {
+		previous := status.milestones
+		status.milestones = milestones
+		defer func() { status.milestones = previous }()
+	}
+	defer func() { runErr = errors.Join(runErr, milestones.drain()) }()
+	observed := observedClient{Client: client, status: status, metrics: &metrics, milestones: milestones}
 	withState := &stateflow.Client{Client: observed, Store: store}
 	providers := []loop.Provider{loop.NewGenericProvider(withState)}
 	if capabilities != nil {
 		if _, ok := client.(toolcall.Client); !ok {
 			return errors.New("LLM client does not support tools")
 		}
-		providers = []loop.Provider{&loop.ToolProvider{Client: observed, Observer: withState, Evaluator: observed, Reconciler: observed, Runtime: capabilities, Store: store}}
+		providers = []loop.Provider{&loop.ToolProvider{Client: observed, Observer: withState, Evaluator: observed, Reconciler: observed, Runtime: capabilities, Store: store, FlushMilestones: milestones.drain}}
 	}
 	return runObjective(ctx, objective, initial, providers, withState, output, status, &metrics, store)
 }

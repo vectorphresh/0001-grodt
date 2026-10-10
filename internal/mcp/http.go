@@ -21,11 +21,12 @@ type wireTransport struct {
 	last    *capture
 }
 type capture struct {
-	mu     sync.Mutex
-	data   []byte
-	sse    bool
-	id     json.RawMessage
-	failed bool
+	mu       sync.Mutex
+	data     []byte
+	sse      bool
+	id       json.RawMessage
+	failed   bool
+	observed int
 }
 type captureBody struct {
 	io.ReadCloser
@@ -46,6 +47,7 @@ func (b *captureBody) Read(p []byte) (int, error) {
 	n, err := b.ReadCloser.Read(p)
 	b.c.mu.Lock()
 	defer b.c.mu.Unlock()
+	b.c.observed = len(b.c.data) + n
 	if n > left {
 		b.c.failed = true
 		return 0, errors.New("MCP response exceeds wire limit")
@@ -90,6 +92,20 @@ func (t *wireTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		t.mu.Unlock()
 	}
 	return resp, nil
+}
+
+// reset prevents a failed request from being diagnosed using a previous response.
+func (t *wireTransport) reset() { t.mu.Lock(); t.last = nil; t.mu.Unlock() }
+func (t *wireTransport) overflow() (int, bool) {
+	t.mu.Lock()
+	c := t.last
+	t.mu.Unlock()
+	if c == nil {
+		return 0, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.observed, c.failed
 }
 func (t *wireTransport) result() (json.RawMessage, error) {
 	t.mu.Lock()

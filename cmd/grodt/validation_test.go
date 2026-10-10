@@ -44,7 +44,7 @@ func TestEvaluationValidationCorrection(t *testing.T) {
 				t.Fatalf("calls=%d err=%v report=%s", evaluations, err, &diag)
 			}
 		} else {
-			if err == nil || evaluations != structured.MaxStructuredAttempts || out.Len() != 0 || !strings.Contains(diag.String(), "Status: failed") || !strings.Contains(diag.String(), "Requests: 4\n") {
+			if err == nil || evaluations != structured.MaxStructuredAttempts || out.Len() != 0 || !strings.Contains(diag.String(), "Status: failed") || !strings.Contains(diag.String(), "Requests: 6\n") {
 				t.Fatalf("calls=%d err=%v report=%s", evaluations, err, &diag)
 			}
 		}

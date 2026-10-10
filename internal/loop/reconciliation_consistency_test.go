@@ -26,7 +26,7 @@ func consistencyFixture(t *testing.T) *ToolProvider {
 }
 
 func continuityResult(valid bool, rationale string) openai.JSONResult {
-	return openai.JSONResult{JSON: mustEncode(map[string]any{"continuity_valid": valid, "satisfied": true, "rationale": rationale})}
+	return openai.JSONResult{JSON: mustEncode(map[string]any{"continuity_valid": valid, "purpose_preserved": valid, "satisfied": true, "rationale": rationale})}
 }
 
 func TestReconciliationRetainedContradictionCorrection(t *testing.T) {
@@ -118,7 +118,7 @@ func TestReconciliationInconsistentNoProgressExhaustsCorrectionLimit(t *testing.
 		return continuityResult(false, "Missing-inspection focus contradicts established inspection."), nil
 	}}
 	err := p.reconcile(context.Background(), before, "Continue", nil)
-	if !errors.Is(err, errContinuityRejected) || calls != 3 || evaluations != 3 {
+	if !errors.Is(err, errContinuityRejected) || calls != maxReconciliationAttempts || evaluations != maxReconciliationAttempts {
 		t.Fatalf("consistency bypassed or incorrect retry limit: %v, calls=%d, evaluations=%d", err, calls, evaluations)
 	}
 	after := p.Store.Snapshot()
@@ -163,6 +163,7 @@ func TestReconciliationEmptyObservationScopeAndCoverage(t *testing.T) {
 				focus = "Execution was completed because the inspection returned no matches"
 			}
 			p, _ := toolsHarness(t, []runstate.Definition{{Name: "observations", Schema: json.RawMessage(`{"type":"object"}`), Initial: json.RawMessage(data), Module: &eventModule{}}}, false)
+			seedProcedure(t, p, "inspect", "Inspect scope")
 			p.Reconciler = structuredClient{call: func(context.Context, string, string, json.RawMessage, openai.JSONSpecification) (openai.JSONResult, error) {
 				return withReconciliationFocus(t, reconciliationResult(t, "progress", nil, ""), &focus), nil
 			}}
@@ -196,7 +197,7 @@ func TestReconciliationEmptyObservationScopeAndCoverage(t *testing.T) {
 				if err != nil || evaluations != 1 {
 					t.Fatalf("successful empty inspection rejected: %v", err)
 				}
-			} else if !errors.Is(err, errContinuityRejected) || evaluations != 3 {
+			} else if !errors.Is(err, errContinuityRejected) || evaluations != maxReconciliationAttempts {
 				t.Fatalf("unsupported inference accepted: %v evaluations=%d", err, evaluations)
 			}
 		})
@@ -224,7 +225,7 @@ func TestReconciliationCorrectionFeedbackBounded(t *testing.T) {
 	p.Evaluator = structuredClient{call: func(context.Context, string, string, json.RawMessage, openai.JSONSpecification) (openai.JSONResult, error) {
 		return continuityResult(false, strings.Repeat("界", 512)), nil
 	}}
-	if err := p.reconcile(context.Background(), p.Store.Snapshot(), "Continue", nil); !errors.Is(err, errContinuityRejected) || calls != 3 {
+	if err := p.reconcile(context.Background(), p.Store.Snapshot(), "Continue", nil); !errors.Is(err, errContinuityRejected) || calls != maxReconciliationAttempts {
 		t.Fatalf("unexpected correction result: %v calls=%d", err, calls)
 	}
 }
@@ -261,11 +262,11 @@ func TestReconciliationDowngradedStateRequiresConsistency(t *testing.T) {
 			t.Fatal(err)
 		}
 		if len(input.Claims) > 0 {
-			return openai.JSONResult{JSON: json.RawMessage(`{"continuity_valid":true,"satisfied":false,"rationale":"Inspection evidence is insufficient."}`)}, nil
+			return openai.JSONResult{JSON: json.RawMessage(`{"continuity_valid":true,"purpose_preserved":true,"satisfied":false,"rationale":"Inspection evidence is insufficient."}`)}, nil
 		}
 		return continuityResult(false, "Retained focus claims completion despite the downgraded unresolved inspection."), nil
 	}}
-	if err := p.reconcile(ctx, before, "Continue", nil); !errors.Is(err, errContinuityRejected) || evaluations != 6 {
+	if err := p.reconcile(ctx, before, "Continue", nil); !errors.Is(err, errContinuityRejected) || evaluations != maxReconciliationAttempts {
 		t.Fatalf("downgraded representation bypassed consistency: %v evaluations=%d", err, evaluations)
 	}
 	if after := p.Store.Snapshot(); !reflect.DeepEqual(before.Tasks, after.Tasks) {

@@ -14,6 +14,8 @@ func (s *Store) ModelJSON() json.RawMessage {
 		EvidenceState    map[string]string `json:"evidence_state,omitempty"`
 		EstablishedSteps []string          `json:"established_steps,omitempty"`
 		UnresolvedSteps  []string          `json:"unresolved_steps,omitempty"`
+		CurrentPosition  int               `json:"current_position,omitempty"`
+		PlanGuidance     string            `json:"plan_guidance,omitempty"`
 		ID               string            `json:"id"`
 		ParentID         string            `json:"parent_id,omitempty"`
 		Objective        string            `json:"objective"`
@@ -41,6 +43,15 @@ func (s *Store) ModelJSON() json.RawMessage {
 		if relevant[id] {
 			v := taskView{ID: t.ID, ParentID: t.ParentID, Objective: t.Objective, Status: t.Status, Cycles: t.Cycles, Plan: t.Plan}
 			if t.Plan != nil {
+				projected := *t.Plan
+				projected.AdvanceCurrentStep()
+				v.Plan = &projected
+				v.PlanGuidance = "Your accepted plan persists until an accepted update changes it. Follow current_step; unmentioned steps remain in their accepted order. Update your plan before changing its procedure; tactical choices within the current step need no update."
+				for i, step := range projected.Steps {
+					if step.ID == projected.CurrentStep {
+						v.CurrentPosition = i + 1
+					}
+				}
 				v.EvidenceState = map[string]string{}
 				refs := append([]EvidenceReference(nil), t.Plan.Evidence...)
 				for _, step := range t.Plan.Steps {

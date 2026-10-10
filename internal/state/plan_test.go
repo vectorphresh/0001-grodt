@@ -104,6 +104,27 @@ func TestPlanEvidenceAndStructuralValidation(t *testing.T) {
 	}
 }
 
+func TestCollectedStepEvidenceRequiresStartedStatus(t *testing.T) {
+	ctx := context.Background()
+	s := planStore(t)
+	plan := Plan{Description: "Inspect configuration", Status: "active", Steps: []Step{{ID: "inspect", Description: "Inspect configuration", Status: "pending"}}}
+	if err := s.RevisePlan(ctx, plan); err != nil {
+		t.Fatal(err)
+	}
+	active, _ := s.Active()
+	plan = *active.Plan
+	plan.Steps[0].Evidence = []EvidenceReference{{Partition: "world", Version: 0, Path: "/setting"}}
+	before := s.JSON()
+	err := s.RevisePlan(ctx, plan)
+	if err == nil || !strings.Contains(err.Error(), "cannot remain pending") || !strings.Contains(err.Error(), "active") || !bytes.Equal(before, s.JSON()) {
+		t.Fatalf("pending evidence must be rejected atomically with actionable feedback: %v", err)
+	}
+	plan.Steps[0].Status = "active"
+	if err := s.RevisePlan(ctx, plan); err != nil {
+		t.Fatalf("started work with collected evidence rejected: %v", err)
+	}
+}
+
 func TestRootCompletionDoesNotAutoSatisfyChildren(t *testing.T) {
 	ctx := context.Background()
 	s := planStore(t)
@@ -111,7 +132,7 @@ func TestRootCompletionDoesNotAutoSatisfyChildren(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RevisePlan(ctx, Plan{Description: "Investigation", Status: "partial", InformationGaps: []string{"Unknown cause"}, Steps: []Step{}}); err != nil {
+	if err := s.RevisePlan(ctx, Plan{Description: "Investigation", Status: "partial", InformationGaps: []string{"Unknown cause"}, Steps: []Step{{ID: "investigate", Description: "Investigate cause", Status: "partial"}}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.CompleteObjective(ctx, "Root outcome independently confirmed"); err != nil {
@@ -138,6 +159,10 @@ func TestPlanFocusCompatibilityBoundsAndCompletion(t *testing.T) {
 	if legacy.UnresolvedFocus != "" {
 		t.Fatal("legacy plan gained focus")
 	}
+	if err := s.RevisePlan(ctx, legacy); err == nil {
+		t.Fatal("empty legacy plan accepted")
+	}
+	legacy.Steps = []Step{{ID: "inspect", Description: "Inspect", Status: "pending"}}
 	if err := s.RevisePlan(ctx, legacy); err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +185,53 @@ func TestPlanFocusCompatibilityBoundsAndCompletion(t *testing.T) {
 		t.Fatal("plan satisfied with unresolved focus")
 	}
 	next.UnresolvedFocus = ""
+	next.Steps = append([]Step(nil), next.Steps...)
+	next.Steps[0].Status = "satisfied"
+	next.Steps[0].Outcome = "Inspected"
+	next.Steps[0].Evidence = next.Evidence
+	next.CurrentStep = ""
 	if err := s.CheckPlan(next); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestOrderedCurrentPositionAndEmptyPlan(t *testing.T) {
+	ctx := context.Background()
+	s := planStore(t)
+	if err := s.RevisePlan(ctx, Plan{Description: "Empty", Status: "active", Steps: []Step{}}); err == nil {
+		t.Fatal("accepted empty plan")
+	}
+	plan := Plan{Description: "Inspect", Status: "active", Steps: []Step{{ID: "a", Description: "Inspect account", Status: "pending"}, {ID: "b", Description: "Assess quotes", Status: "pending"}, {ID: "c", Description: "Assess setup", Status: "pending"}}}
+	if err := s.RevisePlan(ctx, plan); err != nil {
+		t.Fatal(err)
+	}
+	active, _ := s.Active()
+	if active.Plan.CurrentStep != "a" {
+		t.Fatal("initial position not derived")
+	}
+	plan = *active.Plan
+	plan.Steps = append([]Step(nil), plan.Steps...)
+	plan.Steps[0].Status = "failed"
+	plan.CurrentStep = ""
+	if err := s.RevisePlan(ctx, plan); err != nil {
+		t.Fatal(err)
+	}
+	active, _ = s.Active()
+	if active.Plan.CurrentStep != "b" || len(active.Plan.Steps) != 3 {
+		t.Fatal("ordered advancement lost steps")
+	}
+	var view struct {
+		Tasks struct {
+			Records map[string]struct {
+				CurrentPosition int   `json:"current_position"`
+				Plan            *Plan `json:"plan"`
+			} `json:"records"`
+		} `json:"tasks"`
+	}
+	if err := json.Unmarshal(s.ModelJSON(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if view.Tasks.Records[active.ID].CurrentPosition != 2 || len(view.Tasks.Records[active.ID].Plan.Steps) != 3 {
+		t.Fatal("projection lost authoritative position")
 	}
 }

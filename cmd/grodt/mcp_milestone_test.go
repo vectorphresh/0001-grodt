@@ -121,6 +121,9 @@ func (h *mcpMilestone) run(ctx context.Context, client openai.Client, key string
 type milestoneFake struct{ openai.Client }
 
 func (milestoneFake) GenerateWithTools(_ context.Context, r toolcall.Request) (toolcall.Response, error) {
+	if len(r.Tools) == 1 && r.Tools[0].Name == "grodt_manage_plan" {
+		return toolcall.Response{Calls: []toolcall.Call{{ID: "plan", Name: "grodt_manage_plan", Arguments: json.RawMessage(`{"action":"revise","plan":{"description":"Retrieve and report the fixture marker","revision":0,"status":"active","steps":[{"id":"lookup","description":"Retrieve and report the fixture marker","status":"pending"}]}}`)}}}, nil
+	}
 	for _, m := range r.Messages {
 		if m.Role == "tool" {
 			var out struct {

@@ -13,7 +13,7 @@ import (
 func TestRecoverableFailureFeedback(t *testing.T) {
 	for _, mode := range []string{"markup", "schema", "provider"} {
 		t.Run(mode, func(t *testing.T) {
-			p, f := toolsHarness(t, nil, false)
+			p, f := toolsExecutionHarness(t, nil, false)
 			requests := 0
 			p.Client = nativeClient(func(_ context.Context, r toolcall.Request) (toolcall.Response, error) {
 				requests++
@@ -56,7 +56,7 @@ func TestRecoverableFailureFeedback(t *testing.T) {
 
 func TestFailureFeedbackBoundedAndAuthenticationTerminal(t *testing.T) {
 	for _, status := range []int{400, 401, 403} {
-		p, f := toolsHarness(t, nil, false)
+		p, f := toolsExecutionHarness(t, nil, false)
 		requests := 0
 		cause := &openai.ProviderRequestError{StatusCode: status}
 		p.Client = nativeClient(func(context.Context, toolcall.Request) (toolcall.Response, error) {

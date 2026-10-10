@@ -11,10 +11,10 @@ import (
 	"github.com/vectorphresh/0001-grodt/internal/validation"
 )
 
-// MaxStructuredAttempts includes the initial inference and two corrections.
+// MaxStructuredAttempts includes the initial inference and four corrections.
 // It is independent of the outer agent-cycle limit: a correction repeats only
 // one structured operation, and contract operations can run outside that loop.
-const MaxStructuredAttempts = 3
+const MaxStructuredAttempts = 5
 
 var ErrAttemptsExhausted = errors.New("structured validation attempt limit reached")
 
