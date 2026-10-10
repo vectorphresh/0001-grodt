@@ -1,4 +1,25 @@
 openai:
   environment:
+    OPENAI_TIMEOUT: 10m
     OPENAI_BASE_URL: http://192.168.1.231:8080/v1
     OPENAI_API_KEY: your_api_key_here
+
+state:
+  definition: modules/mcp-tool-state/state.json
+
+mcp:
+  # API credentials belong to the local Alpaca server, not GRODT headers.
+  # Additional server configuration example:
+  # Each server must have a unique name and a Streamable HTTP endpoint.
+  # servers:
+  #   - name: example
+  #     transport: http
+  #     url: "https://example.invalid/mcp"
+  #     # Include environment and header bindings only if the server needs them.
+  #     environment:
+  #       MCP_TOKEN: "REPLACE_WITH_MCP_SERVER_TOKEN"
+  #     http:
+  #       headers:
+  #         Authorization:
+  #           from_environment: MCP_TOKEN
+  #           prefix: "Bearer "

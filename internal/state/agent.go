@@ -27,11 +27,18 @@ func (s *Store) QueueAgentWork(ctx context.Context, work []AgentWork) ([]string,
 		copy.Arguments = append(json.RawMessage(nil), w.Arguments...)
 		tasks.Records[id] = Task{ID: id, ParentID: active.ID, Order: order, Objective: "Invoke external tool", Input: string(w.Arguments), Status: "pending", CreatedAt: s.now().UTC(), AgentWork: &copy}
 	}
+	if len(work) > 0 && active.Plan != nil {
+		beginAttempt(&active, ids)
+		tasks.Records[active.ID] = active
+	}
 	if err := s.validateTasks(ctx, tasks); err != nil {
 		return nil, err
 	}
 	s.snapshot.Tasks = tasks
 	s.taskSequence += uint64(len(work))
+	if active.Attempts != nil && len(work) > 0 && active.Plan != nil {
+		s.appendEntry(Entry{Kind: "step_attempt_started", TaskID: active.ID, Data: encode(active.Attempts)})
+	}
 	for _, id := range ids {
 		s.appendEntry(Entry{Kind: "task_created", TaskID: id, Data: encode(tasks.Records[id])})
 	}

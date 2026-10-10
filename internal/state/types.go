@@ -35,21 +35,22 @@ type TaskState struct {
 	Stack   []string        `json:"stack"`
 }
 type Task struct {
-	Plan       *Plan      `json:"plan,omitempty"`
-	Order      uint64     `json:"order"`
-	AgentWork  *AgentWork `json:"agent_work,omitempty"`
-	Work       *HostWork  `json:"work,omitempty"`
-	ID         string     `json:"id"`
-	ParentID   string     `json:"parent_id,omitempty"`
-	Objective  string     `json:"objective"`
-	Input      string     `json:"input"`
-	Status     string     `json:"status"`
-	CreatedAt  time.Time  `json:"created_at"`
-	StartedAt  *time.Time `json:"started_at,omitempty"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
-	Cycles     uint64     `json:"cycles"`
-	Result     string     `json:"result,omitempty"`
-	Error      string     `json:"error,omitempty"`
+	Attempts   *AttemptSummary `json:"attempts,omitempty"`
+	Plan       *Plan           `json:"plan,omitempty"`
+	Order      uint64          `json:"order"`
+	AgentWork  *AgentWork      `json:"agent_work,omitempty"`
+	Work       *HostWork       `json:"work,omitempty"`
+	ID         string          `json:"id"`
+	ParentID   string          `json:"parent_id,omitempty"`
+	Objective  string          `json:"objective"`
+	Input      string          `json:"input"`
+	Status     string          `json:"status"`
+	CreatedAt  time.Time       `json:"created_at"`
+	StartedAt  *time.Time      `json:"started_at,omitempty"`
+	FinishedAt *time.Time      `json:"finished_at,omitempty"`
+	Cycles     uint64          `json:"cycles"`
+	Result     string          `json:"result,omitempty"`
+	Error      string          `json:"error,omitempty"`
 }
 type Partition struct {
 	Metadata Metadata         `json:"metadata"`

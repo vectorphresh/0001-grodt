@@ -741,3 +741,21 @@ required. Procedural reconciliation permits ten total attempts per operation (th
 proposal plus nine corrections). The independent structured schema-validation
 limit is five attempts (one initial inference plus four corrections). Evidence semantics, acceptance rules and failure
 behavior remain unchanged; no stall detection is added.
+
+### Work attempts and replanning
+
+Reasoning tasks expose an `attempts` summary in durable state and model context.
+One preflighted external-tool batch counts as one attempt. Before dispatch,
+the host records the accepted `current_step`, plan revision, remaining gaps,
+and execution task IDs. This identifies dispatch scope; it does not infer that
+every tool result contributes to that step. Start and accepted reconciliation
+records remain in the journal; current state retains only the latest summary.
+
+Accepted step changes reset the consecutive no-progress counter. Focus-only
+edits, unchanged steps, and reconciliation correction attempts do not. After
+three consecutive batches without accepted step progress, actor instructions
+request replanning or an honest blocker assessment while preserving accepted
+outcomes, evidence, and completion criteria. This is guidance, not a new tool
+execution gate. The task-level streak survives plan revisions and step-ID
+changes. Rejected reconciliation leaves the attempt `in_progress` rather than
+inventing an accepted progress judgment.
