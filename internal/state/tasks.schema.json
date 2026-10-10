@@ -286,6 +286,66 @@
               "steps"
             ],
             "additionalProperties": false
+          },
+          "attempts": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "consecutive_no_progress": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "plan_revision": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "step_id": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string",
+                "maxLength": 512
+              },
+              "outcome": {
+                "enum": [
+                  "in_progress",
+                  "progress",
+                  "no_progress"
+                ]
+              },
+              "replan_required": {
+                "type": "boolean"
+              },
+              "information_gaps": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 8
+              },
+              "result_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 8
+              }
+            },
+            "required": [
+              "total",
+              "consecutive_no_progress",
+              "plan_revision",
+              "step_id",
+              "reason",
+              "outcome",
+              "replan_required",
+              "information_gaps",
+              "result_ids"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [

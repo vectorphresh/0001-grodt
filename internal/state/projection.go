@@ -10,6 +10,7 @@ import (
 // Partition values are module-owned current world state, not event archives.
 func (s *Store) ModelJSON() json.RawMessage {
 	type taskView struct {
+		Attempts         *AttemptSummary   `json:"attempts,omitempty"`
 		Plan             *Plan             `json:"plan,omitempty"`
 		EvidenceState    map[string]string `json:"evidence_state,omitempty"`
 		EstablishedSteps []string          `json:"established_steps,omitempty"`
@@ -42,6 +43,7 @@ func (s *Store) ModelJSON() json.RawMessage {
 	for id, t := range s.snapshot.Tasks.Records {
 		if relevant[id] {
 			v := taskView{ID: t.ID, ParentID: t.ParentID, Objective: t.Objective, Status: t.Status, Cycles: t.Cycles, Plan: t.Plan}
+			v.Attempts = t.Attempts
 			if t.Plan != nil {
 				projected := *t.Plan
 				projected.AdvanceCurrentStep()

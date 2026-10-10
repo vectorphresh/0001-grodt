@@ -145,6 +145,9 @@ func (p *ToolProvider) Handle(ctx context.Context, s *State) (_ bool, err error)
 			request.Messages = append(request.Messages, toolcall.Message{Role: "user", Text: feedback})
 		}
 		stage = "model generation"
+		if active, ok := p.Store.Active(); ok && active.Attempts != nil && active.Attempts.ReplanRequired {
+			request.Instructions += "\nRepeated work attempts produced no accepted step progress. Replan before repeating the unresolved work, or report an honest blocker. Use attempts in accepted state with the existing plan outcomes, completion criteria, information gaps and evidence freshness. Preserve collected evidence and supported progress; explicitly explain how the changed approach addresses remaining requirements. Do not silently weaken criteria or restart completed work. Plan edits do not erase attempt history."
+		}
 		result, err := p.Client.GenerateWithTools(ctx, request)
 		if err != nil {
 			var failure interface{ FailureFeedback() string }

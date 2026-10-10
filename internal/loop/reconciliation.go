@@ -285,6 +285,23 @@ func (p *ToolProvider) reconcile(ctx context.Context, before runstate.Snapshot, 
 			correction = reconciliationSemanticCorrection(err, proposed)
 			continue
 		}
+		if err == nil && len(calls) > 0 {
+			// Only accepted, changed steps count as progress; focus-only edits
+			// and repeated proposals do not reset the work-attempt streak.
+			active, _ := p.Store.Active()
+			progress := false
+			previous := before.Tasks.Records[input.TaskID].Plan
+			if previous != nil && active.Plan != nil {
+				for _, step := range active.Plan.Steps {
+					for _, old := range previous.Steps {
+						if step.ID == old.ID && !reflect.DeepEqual(step, old) {
+							progress = true
+						}
+					}
+				}
+			}
+			p.Store.FinishAttempt(input.TaskID, progress, decision.Reason)
+		}
 		return err
 	}
 	return errors.New("reconciliation correction limit exceeded")
