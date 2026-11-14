@@ -10,9 +10,11 @@ import (
 )
 
 type serviceConfig struct {
-	Definition  string            `yaml:"definition"`
-	Servers     []MCPServer       `yaml:"servers"`
-	Environment map[string]string `yaml:"environment"`
+	Definition           string            `yaml:"definition"`
+	Persistence          string            `yaml:"persistence"`
+	StrategyContextBytes int               `yaml:"strategy_context_bytes"`
+	Servers              []MCPServer       `yaml:"servers"`
+	Environment          map[string]string `yaml:"environment"`
 }
 
 type yamlSource map[string]serviceConfig

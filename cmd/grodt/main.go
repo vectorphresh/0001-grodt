@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -50,7 +51,7 @@ func exitCode(err error) int {
 }
 
 // run is the composition root. There is deliberately no stdin dependency.
-func run(ctx context.Context, args []string, output, diagnostics io.Writer) error {
+func run(ctx context.Context, args []string, output, diagnostics io.Writer) (runErr error) {
 	flags := flag.NewFlagSet("grodt", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	allowHTTP := flags.Bool("allow-state-http", false, "allow state modules to request HTTP work")
@@ -79,11 +80,16 @@ func run(ctx context.Context, args []string, output, diagnostics io.Writer) erro
 			stateFlagSet = true
 		}
 	})
+	stateCfg := resolver.State()
 	if !stateFlagSet {
-		*statePath = resolver.State().Definition
+		*statePath = stateCfg.Definition
 		if *statePath != "" && !filepath.IsAbs(*statePath) {
 			*statePath = filepath.Join(filepath.Dir(*path), *statePath)
 		}
+	}
+	persistencePath := stateCfg.Persistence
+	if persistencePath != "" && !filepath.IsAbs(persistencePath) {
+		persistencePath = filepath.Join(filepath.Dir(*path), persistencePath)
 	}
 	client, key, err := clientFromResolver(resolver)
 	if err != nil {
@@ -112,6 +118,16 @@ func run(ctx context.Context, args []string, output, diagnostics io.Writer) erro
 		return errors.New("state initialization failed")
 	}
 	defer store.Close(context.Background())
+	if persistencePath != "" {
+		if err := restoreKnowledge(ctx, store, persistencePath); err != nil {
+			return err
+		}
+		defer func() {
+			if saveErr := saveKnowledge(store, persistencePath); saveErr != nil {
+				runErr = errors.Join(runErr, saveErr)
+			}
+		}()
+	}
 	if *traceDir != "" {
 		status.artifacts, err = newInferenceTrace(*traceDir, store, key)
 		if err != nil {
@@ -125,7 +141,60 @@ func run(ctx context.Context, args []string, output, diagnostics io.Writer) erro
 			status.saveArtifact("final-journal.json", store.Journal())
 		}()
 	}
-	return executeWithCapabilities(ctx, defaultObjective, flags.Arg(0), client, output, status, store, capabilities)
+	return executeWithCapabilities(ctx, defaultObjective, flags.Arg(0), client, output, status, store, capabilities, stateCfg.StrategyContextBytes)
+}
+
+// restoreKnowledge seeds partition values from a previously saved snapshot.
+// A missing file starts fresh; an unreadable or invalid file fails startup so
+// durable state is never silently discarded.
+func restoreKnowledge(ctx context.Context, store *runstate.Store, path string) error {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return errors.New("state persistence read failed")
+	}
+	var snapshot struct {
+		Knowledge map[string]struct {
+			Value json.RawMessage `json:"value"`
+		} `json:"knowledge"`
+	}
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return errors.New("state persistence read failed")
+	}
+	values := make(map[string]json.RawMessage, len(snapshot.Knowledge))
+	for name, partition := range snapshot.Knowledge {
+		values[name] = partition.Value
+	}
+	if err := store.RestoreKnowledge(ctx, values); err != nil {
+		return errors.New("state persistence restore failed")
+	}
+	return nil
+}
+
+func saveKnowledge(store *runstate.Store, path string) error {
+	data := store.JSON()
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".persistence-*")
+	if err != nil {
+		return errors.New("state persistence write failed")
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return errors.New("state persistence write failed")
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return errors.New("state persistence write failed")
+	}
+	if err := tmp.Close(); err != nil {
+		return errors.New("state persistence write failed")
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return errors.New("state persistence write failed")
+	}
+	return nil
 }
 
 func configuredClient(path string) (openai.Client, string, error) {
@@ -178,9 +247,9 @@ func execute(ctx context.Context, objective, initial string, client openai.Clien
 }
 
 func executeWithState(ctx context.Context, objective, initial string, client openai.Client, output io.Writer, status *terminalStatus, store *runstate.Store) error {
-	return executeWithCapabilities(ctx, objective, initial, client, output, status, store, nil)
+	return executeWithCapabilities(ctx, objective, initial, client, output, status, store, nil, 0)
 }
-func executeWithCapabilities(ctx context.Context, objective, initial string, client openai.Client, output io.Writer, status *terminalStatus, store *runstate.Store, capabilities *mcp.Runtime) (runErr error) {
+func executeWithCapabilities(ctx context.Context, objective, initial string, client openai.Client, output io.Writer, status *terminalStatus, store *runstate.Store, capabilities *mcp.Runtime, strategyContextBytes int) (runErr error) {
 	metrics := runMetrics{}
 	milestones := &milestoneReporter{store: store, status: status}
 	if status != nil {
@@ -196,7 +265,7 @@ func executeWithCapabilities(ctx context.Context, objective, initial string, cli
 		if _, ok := client.(toolcall.Client); !ok {
 			return errors.New("LLM client does not support tools")
 		}
-		providers = []loop.Provider{&loop.ToolProvider{Client: observed, Observer: withState, Evaluator: observed, Reconciler: observed, Runtime: capabilities, Store: store, FlushMilestones: milestones.drain}}
+		providers = []loop.Provider{&loop.ToolProvider{Client: observed, Observer: withState, Evaluator: observed, Reconciler: observed, Runtime: capabilities, Store: store, FlushMilestones: milestones.drain, StrategyContextBytes: strategyContextBytes}}
 	}
 	return runObjective(ctx, objective, initial, providers, withState, output, status, &metrics, store)
 }

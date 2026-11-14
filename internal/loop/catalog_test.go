@@ -56,7 +56,7 @@ func TestCatalogPagingContinuation(t *testing.T) {
 			if f.Calls.Load() != 0 || request.Messages[2].CallID != "select" {
 				t.Fatal("page selection executed external work or lost result")
 			}
-			if len(request.Tools) != 81 || request.Tools[0].Name != "grodt_tool_127" {
+			if len(request.Tools) != 83 || request.Tools[0].Name != "grodt_tool_126" {
 				t.Fatal("wrong second page")
 			}
 			return toolcall.Response{Calls: []toolcall.Call{{ID: "invoke", Name: "grodt_tool_144", Arguments: json.RawMessage(`{}`)}}}, nil

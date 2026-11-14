@@ -72,6 +72,11 @@ the latest admitted result per source/tool across inferences. The default
 `config.yaml` selects its manifest through `state.definition`; relative paths
 resolve beside the configuration file. `--state-definition` overrides that
 selection, and `--state-definition=` disables it.
+Set `state.persistence` to a snapshot file path to keep partition knowledge
+(including the gr33d strategy context) durable across runs: the host restores
+validated partition values at startup and saves the snapshot after each run.
+`state.strategy_context_bytes` optionally bounds the
+`grodt_manage_strategy_context` payload (default 8192 UTF-8 bytes).
 See [general state](docs/general-state.md) and the [module ABI](docs/state-module-abi.md).
 
 Final response goes to stdout. Progress, objective, status, rationale, and metrics

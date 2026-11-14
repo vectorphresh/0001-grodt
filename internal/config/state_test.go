@@ -21,3 +21,23 @@ openai:
 		t.Fatal("zero resolver selected state")
 	}
 }
+
+func TestStatePersistenceSelection(t *testing.T) {
+	r := loadConfig(t, `state:
+  definition: modules/gr33d-market-state/state.json
+  persistence: state/gr33d-knowledge.json
+  strategy_context_bytes: 4096
+`)
+	if r.State().Persistence != "state/gr33d-knowledge.json" {
+		t.Fatal("persistence path not loaded")
+	}
+	if r.State().StrategyContextBytes != 4096 {
+		t.Fatal("strategy context limit not loaded")
+	}
+	empty := loadConfig(t, `state:
+  definition: modules/gr33d-market-state/state.json
+`)
+	if empty.State().Persistence != "" || empty.State().StrategyContextBytes != 0 {
+		t.Fatal("implicit persistence configured")
+	}
+}

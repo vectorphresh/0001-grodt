@@ -167,6 +167,52 @@ func (s *Store) Close(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
+// RestoreKnowledge seeds partition values from a previously captured snapshot
+// before any events are admitted. Each value is validated against its
+// partition schema; the restore is atomic and rejects unknown partitions,
+// invalid values, and duplicate names. Versions continue from the seeded
+// defaults so restored content is distinguishable by LastUpdateSequence.
+func (s *Store) RestoreKnowledge(ctx context.Context, values map[string]json.RawMessage) error {
+	if s.closed {
+		return errors.New("store closed")
+	}
+	if err := s.check(ctx); err != nil {
+		return err
+	}
+	byName := make(map[string]Definition, len(s.definitions))
+	for _, d := range s.definitions {
+		byName[d.Name] = d
+	}
+	checked := make(map[string]json.RawMessage, len(values))
+	for name, value := range values {
+		d, ok := byName[name]
+		if !ok {
+			return errors.New("restore references unknown partition")
+		}
+		if !json.Valid(value) || len(value) > MaxValueBytes {
+			return errors.New("restore value is invalid or oversized")
+		}
+		result, err := s.validator.Validate(ctx, d.Schema, value)
+		if err != nil {
+			return errors.New("restore value validation failed")
+		}
+		if !result.Valid {
+			return errors.New("restore value does not satisfy partition schema")
+		}
+		checked[name] = value
+	}
+	for name, value := range checked {
+		p := s.snapshot.Knowledge[name]
+		p.Value = bytes.Clone(value)
+		p.Metadata.Version++
+		p.Metadata.Stale = false
+		p.Metadata.LastError = nil
+		p.Metadata.ConsecutiveFailures = 0
+		s.snapshot.Knowledge[name] = p
+	}
+	return nil
+}
+
 // Admit accepts host-authored provenance only. Callers must finish all structural
 // and downstream acceptance checks before admitting a structured result. Every
 // module receives this event before accepted host work executes. Result events
@@ -311,7 +357,7 @@ func (s *Store) fail(name string, e Event, kind, code string) {
 // Diagnostic records a host-selected outcome without broadcasting a new event.
 func (s *Store) Diagnostic(code string, attempt ...int) {
 	switch code {
-	case "model_context_repair", "planning_correction_retrying", "exclusive_host_correction_retrying", "operation_cancelled", "exclusive_host_correction_started", "exclusive_host_correction_rejected", "exclusive_host_correction_accepted", "exclusive_host_correction_exhausted", "exclusive_host_correction_unusable", "exclusive_host_operations_ambiguous", "reconciliation_correction_requested", "tool_recovery_response", "tool_recovery_exhausted", "tool_recovery_completed", 	"planning_proposal_rejected", "planning_correction_exhausted", "actor_plan_capture_requested", "standalone_plan_correction_started", "plan_initialization_required", "plan_renewal_required", "tool_preflight_correction", "catalog_page_selected", "text_tool_call_correction":
+	case "model_context_repair", "planning_correction_retrying", "exclusive_host_correction_retrying", "operation_cancelled", "exclusive_host_correction_started", "exclusive_host_correction_rejected", "exclusive_host_correction_accepted", "exclusive_host_correction_exhausted", "exclusive_host_correction_unusable", "exclusive_host_operations_ambiguous", "reconciliation_correction_requested", "tool_recovery_response", "tool_recovery_exhausted", "tool_recovery_completed", "planning_proposal_rejected", "planning_correction_exhausted", "actor_plan_capture_requested", "standalone_plan_correction_started", "plan_initialization_required", "plan_renewal_required", "tool_preflight_correction", "catalog_page_selected", "text_tool_call_correction":
 	default:
 		code = "operation_failed"
 	}
