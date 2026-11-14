@@ -40,3 +40,8 @@ traces/**
 prompt.txt
 # add config.yaml to .gitignore to avoid committing sensitive information
 config.yaml
+# grodt durable state snapshots
+/state/
+
+#ignore the workspace file
+0001-grodt.code-workspace
