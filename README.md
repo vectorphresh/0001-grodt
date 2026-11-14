@@ -95,6 +95,13 @@ Set `openai.environment.OPENAI_TIMEOUT` in YAML or `OPENAI_TIMEOUT` in the
 process environment to a positive Go duration such as `10m` or `300s`; YAML takes
 precedence. The supplied `config.yaml` uses `10m`. This applies to generation,
 tool continuations, and evaluation; there is no additional whole-run timeout.
+Set `openai.environment.OPENAI_REASONING_EFFORT` in YAML or
+`OPENAI_REASONING_EFFORT` in the process environment to `none`, `minimal`,
+`low`, `medium`, or `high` to send `reasoning_effort` on every LLM request;
+YAML takes precedence. Blank or missing omits the parameter and leaves the
+endpoint's default in force. Reasoning-capable endpoints can spend most of a
+run generating hidden chain-of-thought, so `none` is the practical choice for
+local prototypes. Invalid values fail configuration loading.
 
 Requests counts LLM client invocations, including failed calls. Token counts come
 only from available authoritative API metadata on successful calls, covering

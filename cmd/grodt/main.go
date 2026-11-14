@@ -159,7 +159,11 @@ func clientFromResolver(resolver *config.Resolver) (openai.Client, string, error
 	if err != nil && !errors.Is(err, config.ErrNotFound) {
 		return nil, "", err
 	}
-	client, err := openai.NewClient(openai.Config{BaseURL: base, APIKey: key, Model: model, Timeout: timeout})
+	effort, err := resolver.GetEnvironment("openai", "OPENAI_REASONING_EFFORT")
+	if err != nil && !errors.Is(err, config.ErrNotFound) {
+		return nil, "", err
+	}
+	client, err := openai.NewClient(openai.Config{BaseURL: base, APIKey: key, Model: model, Timeout: timeout, ReasoningEffort: effort})
 	return client, key, err
 }
 

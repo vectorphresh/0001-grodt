@@ -311,7 +311,7 @@ func (s *Store) fail(name string, e Event, kind, code string) {
 // Diagnostic records a host-selected outcome without broadcasting a new event.
 func (s *Store) Diagnostic(code string, attempt ...int) {
 	switch code {
-	case "model_context_repair", "planning_correction_retrying", "exclusive_host_correction_retrying", "operation_cancelled", "exclusive_host_correction_started", "exclusive_host_correction_rejected", "exclusive_host_correction_accepted", "exclusive_host_correction_exhausted", "exclusive_host_correction_unusable", "exclusive_host_operations_ambiguous", "reconciliation_correction_requested", "tool_recovery_response", "tool_recovery_exhausted", "tool_recovery_completed", "planning_proposal_rejected", "planning_correction_exhausted", "actor_plan_capture_requested", "standalone_plan_correction_started", "plan_initialization_required", "plan_renewal_required":
+	case "model_context_repair", "planning_correction_retrying", "exclusive_host_correction_retrying", "operation_cancelled", "exclusive_host_correction_started", "exclusive_host_correction_rejected", "exclusive_host_correction_accepted", "exclusive_host_correction_exhausted", "exclusive_host_correction_unusable", "exclusive_host_operations_ambiguous", "reconciliation_correction_requested", "tool_recovery_response", "tool_recovery_exhausted", "tool_recovery_completed", 	"planning_proposal_rejected", "planning_correction_exhausted", "actor_plan_capture_requested", "standalone_plan_correction_started", "plan_initialization_required", "plan_renewal_required", "tool_preflight_correction", "catalog_page_selected", "text_tool_call_correction":
 	default:
 		code = "operation_failed"
 	}

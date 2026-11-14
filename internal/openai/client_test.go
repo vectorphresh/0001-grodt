@@ -17,6 +17,7 @@ import (
 	"time"
 
 	llm "github.com/vectorphresh/0001-grodt/internal/openai"
+	"github.com/vectorphresh/0001-grodt/internal/toolcall"
 )
 
 type wireRequest struct {
@@ -132,6 +133,104 @@ func TestConstruction(t *testing.T) {
 				t.Fatal("credential leaked")
 			}
 		})
+	}
+}
+
+func TestReasoningEffortConstruction(t *testing.T) {
+	for _, tc := range []struct {
+		effort string
+		valid  bool
+	}{
+		{"", true},
+		{"   ", true},
+		{"none", true},
+		{"minimal", true},
+		{"low", true},
+		{"medium", true},
+		{"high", true},
+		{"NONE", false},
+		{"ultra", false},
+		{"none ", true},
+	} {
+		t.Run("effort "+fmt.Sprintf("%q", tc.effort), func(t *testing.T) {
+			c, err := llm.NewClient(llm.Config{BaseURL: "http://localhost:8080/v1", APIKey: rand.Text(), ReasoningEffort: tc.effort})
+			if (err == nil) != tc.valid || (c != nil) != tc.valid {
+				t.Fatalf("unexpected construction result for %q: %v", tc.effort, err)
+			}
+		})
+	}
+}
+
+func TestReasoningEffortTravelsOnTheWire(t *testing.T) {
+	for _, tc := range []struct {
+		effort string
+		want   string
+	}{
+		{"none", "none"},
+		{" medium ", "medium"},
+		{"", ""},
+	} {
+		t.Run("effort "+fmt.Sprintf("%q", tc.effort), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				data, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Error("cannot read request")
+				}
+				var fields map[string]json.RawMessage
+				if json.Unmarshal(data, &fields) != nil {
+					t.Error("request is not JSON")
+				}
+				got, present := fields["reasoning_effort"]
+				if tc.want == "" {
+					if present {
+						t.Errorf("reasoning_effort must be omitted, got %s", got)
+					}
+				} else if !present {
+					t.Errorf("reasoning_effort missing, want %q", tc.want)
+				} else if string(got) != fmt.Sprintf("%q", tc.want) {
+					t.Errorf("reasoning_effort = %s, want %q", got, tc.want)
+				}
+				completion(w, "ok")
+			}))
+			t.Cleanup(server.Close)
+			c, err := llm.NewClient(llm.Config{BaseURL: server.URL + "/v1/", APIKey: rand.Text(), Timeout: time.Second, ReasoningEffort: tc.effort})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.Prompt(context.Background(), "hello"); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestReasoningEffortAppliesToToolRequests(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error("cannot read request")
+		}
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(data, &fields) != nil {
+			t.Error("request is not JSON")
+		}
+		if got := string(fields["reasoning_effort"]); got != `"low"` {
+			t.Errorf("reasoning_effort = %s, want \"low\"", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]any{"role": "assistant", "content": "done"}}}})
+	}))
+	t.Cleanup(server.Close)
+	c, err := llm.NewClient(llm.Config{BaseURL: server.URL + "/v1/", APIKey: rand.Text(), Timeout: time.Second, ReasoningEffort: "low"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools, ok := c.(toolcall.Client)
+	if !ok {
+		t.Fatal("client does not support tools")
+	}
+	if _, err := tools.GenerateWithTools(context.Background(), toolcall.Request{Instructions: "act"}); err != nil {
+		t.Fatal(err)
 	}
 }
 

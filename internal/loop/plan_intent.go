@@ -114,7 +114,17 @@ func planIntentChanges(old, proposed *runstate.Plan, source string) []string {
 	if strings.Join(previousOrder, "\x00") != strings.Join(proposedOrder, "\x00") {
 		changed = append(changed, "step_order")
 	}
-	if old.UnresolvedFocus != "" && old.UnresolvedFocus != proposed.UnresolvedFocus {
+	// unresolved_focus is a narrative pointer at the remaining work; the steps
+	// above are the authoritative carrier of retained intent and are compared
+	// individually. Advancing or rewording the focus as work completes is normal
+	// progress, so only its withdrawal is an intent change. Treating any
+	// rewording as a revision deadlocked runs: the model's routine step-completion
+	// patch also reworded the focus, so validatePlanIntent demanded a
+	// revision_reason the model never supplied and the patch was rejected,
+	// leaving the step stuck at partial. Withdrawal is still independently
+	// enforced by CheckPlan, which requires an empty unresolved_focus for a
+	// plan-level satisfied verdict.
+	if old.UnresolvedFocus != "" && proposed.UnresolvedFocus == "" {
 		changed = append(changed, "unresolved_focus")
 	}
 	if old.Description != proposed.Description || old.CompletionCriteria != proposed.CompletionCriteria {

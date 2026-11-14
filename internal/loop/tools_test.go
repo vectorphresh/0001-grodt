@@ -364,6 +364,35 @@ func TestToolFailureStopsSiblingsAndRejectsInvalidObservation(t *testing.T) {
 	}
 }
 
+func TestPreflightCorrectionBudgetResetsAfterDispatch(t *testing.T) {
+	p, _ := toolsExecutionHarness(t, nil, false)
+	requests := 0
+	p.Client = nativeClient(func(_ context.Context, r toolcall.Request) (toolcall.Response, error) {
+		requests++
+		switch requests {
+		case 1, 2:
+			call := toolRequest(r, fmt.Sprintf("bad_%d", requests))
+			call.Arguments = json.RawMessage(`{"key":123}`)
+			return toolcall.Response{Calls: []toolcall.Call{call}}, nil
+		case 3:
+			return toolcall.Response{Calls: []toolcall.Call{toolRequest(r, "good")}}, nil
+		case 4:
+			call := toolRequest(r, "bad_3")
+			call.Arguments = json.RawMessage(`{"key":123}`)
+			return toolcall.Response{Calls: []toolcall.Call{call}}, nil
+		default:
+			return toolcall.Response{Text: "finished"}, nil
+		}
+	})
+	s := &State{Objective: "objective"}
+	if _, err := p.Handle(context.Background(), s); err != nil {
+		t.Fatalf("isolated schema slip after a successful dispatch was fatal: %v", err)
+	}
+	if requests != 5 || s.Response != "finished" {
+		t.Fatalf("requests=%d response=%q", requests, s.Response)
+	}
+}
+
 func TestToolFailureStagePreservesCauseWithoutExposingIt(t *testing.T) {
 	p, _ := toolsExecutionHarness(t, nil, false)
 	cause := errors.New("private-provider-error")

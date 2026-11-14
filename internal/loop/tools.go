@@ -425,6 +425,12 @@ func (p *ToolProvider) Handle(ctx context.Context, s *State) (_ bool, err error)
 			return false, err
 		}
 		feedback = ""
+		// A batch that passes preflight and dispatches proves the model can
+		// produce valid calls again, so the correction budget bounds consecutive
+		// unusable responses, not lifetime ones. Without this reset a long cycle
+		// could exhaust the budget early and turn a later isolated schema slip
+		// into a fatal preflight failure.
+		corrections = 0
 		work := make([]runstate.AgentWork, len(result.Calls))
 		for i, c := range result.Calls {
 			t, _ := p.Runtime.Lookup(c.Name)

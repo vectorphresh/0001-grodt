@@ -20,6 +20,10 @@ type Config struct {
 	// Timeout bounds an entire interaction. Zero selects two minutes; negative
 	// values are invalid. An earlier caller deadline always takes precedence.
 	Timeout time.Duration
+	// ReasoningEffort is optional and forwarded unchanged to reasoning-capable
+	// endpoints as reasoning_effort. Blank omits the field entirely, leaving the
+	// endpoint's own default in force.
+	ReasoningEffort string
 }
 
 // JSONSpecification is a generation contract, not local semantic validation.

@@ -58,14 +58,34 @@ func NewClient(config Config) (Client, error) {
 	if model := strings.TrimSpace(config.Model); model != "" {
 		modelOption = option.WithJSONSet("model", model)
 	}
-	service := sdk.NewChatCompletionService(
+	options := []option.RequestOption{
 		option.WithHTTPClient(httpClient),
 		option.WithBaseURL(strings.TrimRight(u.String(), "/")+"/"),
 		option.WithAPIKey(config.APIKey),
 		option.WithMaxRetries(0),
 		modelOption,
-	)
+	}
+	if effort := strings.TrimSpace(config.ReasoningEffort); effort != "" {
+		if !validReasoningEffort(effort) {
+			return nil, fmt.Errorf("openai: ReasoningEffort must be one of %s", strings.Join(reasoningEfforts, ", "))
+		}
+		options = append(options, option.WithJSONSet("reasoning_effort", effort))
+	}
+	service := sdk.NewChatCompletionService(options...)
 	return &client{service: service, timeout: config.Timeout}, nil
+}
+
+// reasoningEfforts is the union of effort levels accepted by OpenAI-compatible
+// reasoning endpoints, including llama.cpp servers.
+var reasoningEfforts = []string{"none", "minimal", "low", "medium", "high"}
+
+func validReasoningEffort(effort string) bool {
+	for _, e := range reasoningEfforts {
+		if effort == e {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *client) Prompt(ctx context.Context, prompt string) (TextResult, error) {

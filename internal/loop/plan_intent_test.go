@@ -507,3 +507,42 @@ func TestPlanIntentProtectsOrderAndHistoricalProgress(t *testing.T) {
 		t.Fatal("scope explanation bypassed completed history protection", err)
 	}
 }
+
+// Advancing unresolved_focus as a step completes is normal progress. Requiring
+// a revision_reason for it deadlocked run b7f3840725eabba4d95e21e4f7809d47: the
+// patch action cannot carry a revision_reason, so the step-completion patch that
+// also advanced the focus was rejected 27 times and s2 never advanced.
+func TestPlanIntentAdvancingFocusIsNotAnIntentChange(t *testing.T) {
+	p := purposeFixture(t, json.RawMessage(`{"account":true}`))
+	ctx := context.Background()
+
+	plan := authoredPlan()
+	plan.Steps[0].Status = "satisfied"
+	plan.Steps[0].Outcome = "Account inspected"
+	plan.Steps[0].Evidence = []runstate.EvidenceReference{{Partition: "observations", Version: 0, Path: "/account"}}
+	plan.CurrentStep = "assets"
+
+	// The same patch the run needed: complete a step and reword the focus to the
+	// remaining work, with no revision_reason available.
+	next := plan
+	next.Steps = append([]runstate.Step{}, plan.Steps...)
+	next.Steps[1].Status = "satisfied"
+	next.Steps[1].Outcome = "Assets listed"
+	next.Steps[1].Evidence = []runstate.EvidenceReference{{Partition: "observations", Version: 0, Path: "/assets"}}
+	next.CurrentStep = "assess"
+	next.UnresolvedFocus = "Assess opportunities, then execute the actor's selected approach"
+
+	if got := planIntentChanges(&plan, &next, "accepted_plan"); len(got) != 0 {
+		t.Fatalf("focus rewording flagged as intent change: %v", got)
+	}
+	if err := p.validatePlanIntent(ctx, &plan, &next, "", "accepted_plan"); err != nil {
+		t.Fatalf("focus rewording rejected without a revision_reason: %v", err)
+	}
+
+	// Withdrawing the focus entirely still requires an explanation.
+	withdrawn := next
+	withdrawn.UnresolvedFocus = ""
+	if got := planIntentChanges(&next, &withdrawn, "accepted_plan"); !strings.Contains(strings.Join(got, ","), "unresolved_focus") {
+		t.Fatalf("focus withdrawal not flagged: %v", got)
+	}
+}
