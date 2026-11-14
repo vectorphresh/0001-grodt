@@ -60,7 +60,7 @@ func (c *client) GenerateWithTools(ctx context.Context, request toolcall.Request
 		return toolcall.Response{}, requestError(err)
 	}
 	if response == nil || len(response.Choices) != 1 {
-		return toolcall.Response{}, errors.New("openai: expected one tool response choice")
+		return toolcall.Response{}, fmt.Errorf("%w: expected one tool response choice", ErrInvalidModelResponse)
 	}
 	choice := response.Choices[0]
 
@@ -78,7 +78,10 @@ func (c *client) GenerateWithTools(ctx context.Context, request toolcall.Request
 			} `json:"function"`
 		} `json:"tool_calls"`
 	}
-	if json.Unmarshal([]byte(choice.Message.RawJSON()), &message) != nil || message.Role == nil || *message.Role != "assistant" || (message.Refusal != nil && *message.Refusal != "") || (len(message.Function) > 0 && string(message.Function) != "null") {
+	if json.Unmarshal([]byte(choice.Message.RawJSON()), &message) != nil {
+		return toolcall.Response{}, fmt.Errorf("%w: malformed tool response JSON", ErrInvalidModelResponse)
+	}
+	if message.Role == nil || *message.Role != "assistant" || (message.Refusal != nil && *message.Refusal != "") || (len(message.Function) > 0 && string(message.Function) != "null") {
 		return toolcall.Response{}, errors.New("openai: malformed or unsupported tool response")
 	}
 	out := toolcall.Response{}
@@ -86,7 +89,7 @@ func (c *client) GenerateWithTools(ctx context.Context, request toolcall.Request
 		out.Text = *message.Content
 	}
 	if len(message.Calls) == 0 && strings.TrimSpace(out.Text) == "" {
-		return toolcall.Response{}, errors.New("openai: empty final tool response")
+		return toolcall.Response{}, fmt.Errorf("%w: empty final tool response", ErrInvalidModelResponse)
 	}
 	if usage := extractUsage(response); usage != nil {
 		out.UsageAvailable = true
@@ -96,12 +99,12 @@ func (c *client) GenerateWithTools(ctx context.Context, request toolcall.Request
 	}
 	for _, call := range message.Calls {
 		if call.ID == nil || call.Type == nil || *call.Type != "function" || call.Function == nil || call.Function.Name == nil || call.Function.Arguments == nil {
-			return toolcall.Response{}, errors.New("openai: malformed tool call")
+			return toolcall.Response{}, fmt.Errorf("%w: malformed tool call", ErrInvalidModelResponse)
 		}
 		out.Calls = append(out.Calls, toolcall.Call{ID: *call.ID, Name: *call.Function.Name, Arguments: json.RawMessage(*call.Function.Arguments)})
 	}
 	if (len(out.Calls) > 0 && choice.FinishReason != "tool_calls") || (len(out.Calls) == 0 && choice.FinishReason != "stop") {
-		return toolcall.Response{}, errors.New("openai: incomplete tool response")
+		return toolcall.Response{}, fmt.Errorf("%w: incomplete tool response", ErrInvalidModelResponse)
 	}
 	return out, nil
 }

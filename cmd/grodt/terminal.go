@@ -91,7 +91,7 @@ type observedClient struct {
 	milestones *milestoneReporter
 }
 
-func (c observedClient) Prompt(ctx context.Context, prompt string) (openai.TextResult, error) {
+func (c observedClient) promptOnce(ctx context.Context, prompt string) (openai.TextResult, error) {
 	if err := c.milestones.drain(); err != nil {
 		return openai.TextResult{}, err
 	}
@@ -116,7 +116,7 @@ func (c observedClient) Prompt(ctx context.Context, prompt string) (openai.TextR
 	}
 	return result, err
 }
-func (c observedClient) RequestMutation(ctx context.Context, instructions string, state, observation json.RawMessage, spec openai.JSONSpecification) (openai.JSONResult, error) {
+func (c observedClient) requestMutationOnce(ctx context.Context, instructions string, state, observation json.RawMessage, spec openai.JSONSpecification) (openai.JSONResult, error) {
 	if err := c.milestones.drain(); err != nil {
 		return openai.JSONResult{}, err
 	}
@@ -151,7 +151,7 @@ func (c observedClient) finished(operation string, start time.Time, err error) e
 
 // Structured generation uses the same accounting and redacted progress channel
 // as ordinary generation. The provider owns validation/admission, not this wrapper.
-func (c observedClient) PromptWithSpecification(ctx context.Context, instructions, prompt string, input json.RawMessage, spec openai.JSONSpecification) (openai.JSONResult, error) {
+func (c observedClient) promptWithSpecificationOnce(ctx context.Context, instructions, prompt string, input json.RawMessage, spec openai.JSONSpecification) (openai.JSONResult, error) {
 	if err := c.milestones.drain(); err != nil {
 		return openai.JSONResult{}, err
 	}
@@ -172,7 +172,7 @@ func (c observedClient) PromptWithSpecification(ctx context.Context, instruction
 	return result, err
 }
 
-func (c observedClient) GenerateWithTools(ctx context.Context, request toolcall.Request) (toolcall.Response, error) {
+func (c observedClient) generateWithToolsOnce(ctx context.Context, request toolcall.Request) (toolcall.Response, error) {
 	if err := c.milestones.drain(); err != nil {
 		return toolcall.Response{}, err
 	}

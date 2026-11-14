@@ -3,6 +3,7 @@ package loop
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	runstate "github.com/vectorphresh/0001-grodt/internal/state"
 )
@@ -10,6 +11,31 @@ import (
 const maxReconciliationValidationFeedback = 8192
 
 const reconciliationStatusGuidance = "Allowed step statuses: pending = not started; active = underway; partial = supported progress with work remaining; satisfied = completion supported by accepted evidence, with an outcome and no unresolved gaps; failed = work ended unsuccessfully; invalidated = prior intent or progress is no longer valid. Use active or partial for unfinished work; invalidated does not mean incomplete."
+
+func reconciliationReferenceError(stepID string, ref runstate.EvidenceReference, input reconciliationInput) error {
+	repair := "Use a reference from accepted_evidence, a resolvable descendant at the same version, or retain that step's existing historical reference; otherwise keep the claim unresolved."
+	// Prefer the closest supplied ancestor so the model can copy a valid
+	// reference instead of guessing another descendant. Never rewrite its claim.
+	var supplied *runstate.EvidenceReference
+	for _, evidence := range input.AcceptedEvidence {
+		candidate := evidence.Reference
+		if evidence.Freshness != "current" || len(evidence.Value) == 0 || candidate.Partition != ref.Partition || candidate.Version != ref.Version {
+			continue
+		}
+		if strings.HasPrefix(ref.Path, candidate.Path+"/") && (supplied == nil || len(candidate.Path) > len(supplied.Path)) {
+			copy := candidate
+			supplied = &copy
+		}
+	}
+	if supplied != nil {
+		encoded := mustEncode(supplied)
+		if len(encoded) <= 1536 {
+			repair += " Copy this supplied reference exactly if it supports the outcome: " + string(encoded) + "."
+		}
+	}
+	repair += " Descendant paths use JSON Pointer escaping within each object key: / becomes ~1 and ~ becomes ~0. For example, the key BTC/USD is one segment BTC~1USD, so /bars/BTC/USD/c must be /bars/BTC~1USD/c. A valid reference does not establish completion; retain only claims supported by its data."
+	return fmt.Errorf("step %q evidence_refs contains an unsupported reference (partition=%q, version=%d, path=%q). %s", boundedPublicText(stepID, 64), boundedPublicText(ref.Partition, 64), ref.Version, boundedPublicText(ref.Path, 128), repair)
+}
 
 type reconciliationFieldMismatch struct {
 	StepID            string `json:"step_id"`
@@ -78,7 +104,7 @@ func reconciliationHostCorrection(err error, proposed json.RawMessage) string {
 	case "too many reconciliation updates":
 		repair = "Return at most eight step updates; leave other accepted steps unchanged."
 	case "no-progress decision contains procedural changes":
-		repair = "You supplied changes with action no_progress. Use action progress to retain those supported changes. If the existing representation is valid unchanged and no changes are needed, set updates=[], current_step=\"\", and unresolved_focus=null; also provide the required reason and result_accounting fields."
+		repair = "You supplied changes with action no_progress. Use action progress to retain those supported changes, with disposition=update for each result contributing to a matching step update. If the existing representation is valid unchanged and no changes are needed, set action=no_progress, updates=[], current_step=\"\", and unresolved_focus=null, with disposition=no_progress and a reason for each accepted result; also provide the required reason and result_accounting fields."
 	case "progress decision has no updates":
 		repair = "For action progress, supply a supported step update, unresolved_focus correction or current_step selection. Use no_progress only when no supported change is needed and the retained representation is valid."
 	case "satisfaction requires outcome, evidence, and no gaps", "step satisfaction requires outcome, evidence, and no gaps":

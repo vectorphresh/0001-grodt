@@ -24,7 +24,7 @@ import (
 )
 
 const defaultObjective = "Complete the user's request using the information supplied in this run."
-const maxCycles = 500
+const maxCycles = 1000
 const usage = "usage: grodt [--trace] [--trace-dir path] [--config path] [--state-definition path] [--allow-state-http] <prompt>"
 
 var errIncomplete = errors.New("objective incomplete: cycle limit reached")
@@ -120,7 +120,10 @@ func run(ctx context.Context, args []string, output, diagnostics io.Writer) erro
 		if err := status.log("Trace artifacts: %s", status.artifacts.dir); err != nil {
 			return err
 		}
-		defer status.saveArtifact("final-state.json", store.JSON())
+		defer func() {
+			status.saveArtifact("final-state.json", store.JSON())
+			status.saveArtifact("final-journal.json", store.Journal())
+		}()
 	}
 	return executeWithCapabilities(ctx, defaultObjective, flags.Arg(0), client, output, status, store, capabilities)
 }

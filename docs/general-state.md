@@ -122,10 +122,9 @@ information gaps. Plan and step statuses are `pending`, `active`, `partial`,
 Descriptions, criteria, outcomes and individual gaps are limited to 512 bytes.
 Plans have at most 32 steps; each plan/step has at most eight evidence references
 and eight gaps. There are at most 64 model-planned tasks and eight active lineage
-levels. Planning permits 32 rejections since the last accepted planning operation;
-acceptance resets that rejection count. External tool success does not reset it.
-Accepted planning operations do not exhaust this allowance. No updates are required
-per cycle.
+levels. Planning rejections retry until corrected or cancelled; acceptance resets
+the rejection count. Counts are diagnostics, not fatal attempt limits. No updates
+are required per cycle.
 
 `revise` supplies the entire current plan with its existing `revision` (zero for
 an initial plan). The host checks the revision and increments it on acceptance.
@@ -204,7 +203,7 @@ facts. Oversized scalar text is omitted rather than represented as complete text
 Input data and candidate outputs are limited to 64 KiB each. The original request
 is initially clipped to 8 KiB, actor intent to 4 KiB, and plan content to 24 KiB;
 encoded-size checks further trim context to reserve accumulated-state space. At
-most 64 evidence values of at most 4 KiB are selected. Current-step evidence is
+most 64 evidence values of at most 16 KiB are selected. Current-step evidence is
 preferred within its source share. JSON numbers retain precision. Overlapping
 parent/child values are not duplicated. MCP text is omitted only when it exactly
 encodes the accompanying structured content; distinct text remains eligible.
@@ -251,6 +250,13 @@ including version-only replays. Module-declared progress status is preserved in
 projection and accompanied by separate freshness. New satisfaction claims still
 require current resolvable evidence, outcomes and no remaining gaps. Explicit
 semantic invalidation and deliberate repeated retrieval remain available.
+
+Unchanged accepted unfinished steps also retain historical evidence references.
+Updating another step does not require rebasing that provenance to the current
+partition version. Changed unfinished steps and new satisfaction claims still
+require current resolvable evidence. Reference validation errors identify the
+owning step, partition, pointer, referenced version and current version; no
+additional semantic evaluation of tool data is introduced by this rule.
 
 `no_progress` requires empty updates, empty current step and null unresolved focus.
 It asserts that retained procedural state remains consistent unchanged. Contradictions
@@ -535,18 +541,16 @@ the existing planning and completion checks. Acceptance clears pending correctio
 companion calls execute only if the actor explicitly requests them afterward.
 No domain admission event is emitted for rejected batches.
 
-Ten usable actor correction responses are permitted for exclusive host correction.
-Failed generation requests, empty responses, and printed tool markup do not consume
-those opportunities;
-existing generation-correction limits separately bound unusable responses.
+Exclusive host correction continues until accepted or caller cancellation.
+Failed generation requests and unusable responses retain correction context.
 Wrong tools, mixed batches, invalid planning content, and ordinary final text
-are usable responses that fail correction. Exhaustion terminates without
+cannot bypass correction. Repeated rejection emits retry diagnostics without
 resuming unrelated work. Existing external-invocation recovery remains separate
 and is suspended while exclusive host correction is pending.
 
 Oversized or malformed arguments are not retained as truncated JSON; safe byte
 counts and feedback require actor reconstruction. Multiple planning operations
-in one batch are terminally rejected as ambiguous. Host-selected correction
+in one batch are rejected as ambiguous and enter correction without dispatch. Bounded candidates remain unaccepted context; the actor selects or consolidates them into one standalone operation. Host-selected correction
 lifecycle codes are retained through existing runtime journal diagnostics; no
 pending proposal is admitted as accepted state.
 
@@ -571,11 +575,10 @@ evaluation against accepted intent and, when applicable, the rejected proposal.
 Outcome/evidence repairs do not require erroneous satisfaction claims to survive.
 Existing structural protections for satisfied/invalidated history still apply.
 
-These corrections permit ten usable actor responses, including for standalone
-rejections; failed generation requests and empty/printed-markup responses retain
-their existing separate generation-correction limits. Standalone correction now
-bounds repeated invalid proposals before the general 32-rejection allowance can
-be exhausted. Acceptance clears correction context and resets the rejection count.
+These corrections retry until accepted or caller cancellation. Every ten usable
+rejected responses emit a retry diagnostic rather than ending the run. Unusable
+responses also remain in correction mode. Acceptance clears correction context
+and resets the rejection count.
 Correction completion cannot be bypassed with unrelated tools or final prose.
 
 Actor prose is retained exactly up to 4 KiB, and proposed arguments exactly up to
@@ -623,8 +626,8 @@ plan revisions in the journal. New completion claims still require evidence
 evaluation. Closing an already completed child or abandoning a child remains
 available through the planning tool; the resumed parent is checked again.
 
-Each initialization/renewal episode permits ten usable actor responses under the
-existing host correction limit. Acceptance resets that episode. Deferred calls
+Each initialization/renewal episode retries until accepted or caller cancellation.
+Acceptance resets that episode. Deferred calls
 are never replayed. Existing empty/exhausted plans remain readable but require
 renewal if the root goal is incomplete. No persisted schema or migration changes
 are needed. Root evaluation adds one model check per missing/exhausted-plan
@@ -729,7 +732,10 @@ than accumulated. It does not duplicate tool payloads or expose steps omitted
 from the bounded reconciliation projection.
 
 Reference failures identify the affected step and supplied reference and explain
-the accepted reference/version/path boundary. Other constraints explain repairs
+the accepted reference/version/path boundary. When available, feedback includes
+the closest supplied ancestor reference to copy exactly, plus JSON Pointer key
+escaping guidance (`/` becomes `~1`, `~` becomes `~0`). Reference corrections
+do not rewrite claims or bypass completion evaluation. Other constraints explain repairs
 for action/update mismatches, update limits, completion evidence, historical
 immutability and current-position selection. Schema-invalid structured output
 continues through the existing schema-validation feedback path; semantic
@@ -737,12 +743,47 @@ continuity rejection continues to return the evaluator's bounded rationale.
 
 No rejected proposal is partially committed. The reconciler must resubmit a
 valid candidate, with independent evaluation of progress and completion still
-required. Procedural reconciliation permits ten total attempts per operation (the initial
-proposal plus nine corrections). The independent structured schema-validation
-limit is five attempts (one initial inference plus four corrections). Evidence semantics, acceptance rules and failure
-behavior remain unchanged; no stall detection is added.
+required. Procedural reconciliation retries until accepted or caller cancellation;
+there is no elapsed-run cutoff. Individual model request timeouts, SDK request/response processing failures,
+invalid native responses and HTTP 429/5xx responses retry with cancellable
+backoff from one second up to thirty seconds, retaining request and run state.
+Safe error classifications survive sanitization; raw SDK causes remain private.
+Authentication and other nonrecoverable request errors still return to the caller.
+Actor generation, structured generation and objective evaluation all use this
+inference retry policy. External tool calls are not automatically replayed.
+Explicit caller cancellation or a caller deadline still stops work.
+
+Provider context-overflow errors trigger actor-request repair rather than repeated
+submission of the same oversized context. The accepted task and plan remain intact;
+raw knowledge is replaced in the request by a bounded exact evidence projection
+with explicit coverage, and oversized tool-message payloads are marked omitted.
+Repeated overflow reduces the projection further and may omit the complete recent
+exchange while retaining the original request. No accepted state is rewritten and
+no external calls are replayed. Correction retries remain cancellable and journaled.
+
+Before repair, a host-owned journal checkpoint retains the original batch state,
+reconciliation input and calls. Each rejection records its unaccepted
+candidate and error. Repeated identical candidates receive targeted field-repair
+guidance. The provider retains correction context on interruption and repairs it
+before dispatching more tools when reentered; successful acquisitions are not
+redispatched by the repair process. These records never modify accepted plan
+state, and completion claims must pass evaluation again. With tracing enabled,
+`final-state.json` captures state at exit and `final-journal.json` preserves the
+checkpoint and rejection records. This does not add a process-restart CLI.
 
 ### Work attempts and replanning
+
+Each step has a host-owned `collected_evidence` array. After a successful
+external result is admitted and its execution task completes, the host appends
+the result task ID and, when available, its module-owned evidence reference to
+the dispatched step. The first item changes `pending` to `active`; it does not
+claim a research outcome or completion. Result task records retain the query
+arguments and returned data even when current knowledge is overwritten by a
+later query. Failed/rejected invocations and tool execution errors are excluded.
+Actor plan mutations omit this array; the host preserves it automatically.
+Collection survives rejected reconciliation, deduplicates by result ID, and
+increments plan revision. Additional collection alone does not reset the
+consecutive no-progress counter. Outcome support remains in `evidence_refs`.
 
 Reasoning tasks expose an `attempts` summary in durable state and model context.
 One preflighted external-tool batch counts as one attempt. Before dispatch,

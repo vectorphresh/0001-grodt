@@ -79,7 +79,7 @@ func TestPurposeJudgmentCannotBeOmitted(t *testing.T) {
 		calls++
 		return openai.JSONResult{JSON: json.RawMessage(`{"continuity_valid":true,"satisfied":true,"rationale":"No new claims."}`)}, nil
 	}}
-	if err := p.reconcile(context.Background(), p.Store.Snapshot(), "Get observations to assess opportunities.", nil); err == nil || calls != structured.MaxStructuredAttempts {
+	if err := p.reconcile(context.Background(), p.Store.Snapshot(), "Get observations to assess opportunities.", nil); err == nil || calls != structured.MaxStructuredAttempts*testReconciliationDeadlineAttempts {
 		t.Fatal("missing purpose judgment accepted", err, calls)
 	}
 	if active, _ := p.Store.Active(); active.Plan != nil {
@@ -262,7 +262,7 @@ func TestActorPlanCaptureBeforeAccountAssetsQuotesChain(t *testing.T) {
 		t.Fatal(err)
 	}
 	active, _ := p.Store.Active()
-	if turns != 7 || fixture.Calls.Load() != 3 || assessments != 5 || active.Plan.Revision != 3 || len(active.Plan.Steps) != 4 || active.Plan.Steps[0].Status != "satisfied" || active.Plan.Steps[1].Status != "satisfied" || active.Plan.CurrentStep != "assess" || active.Plan.Steps[3].Status != "pending" {
+	if turns != 7 || fixture.Calls.Load() != 3 || assessments != 5 || active.Plan.Revision != 6 || len(active.Plan.Steps) != 4 || active.Plan.Steps[0].Status != "satisfied" || active.Plan.Steps[1].Status != "satisfied" || active.Plan.CurrentStep != "assess" || active.Plan.Steps[3].Status != "pending" {
 		t.Fatal("capture chain changed or lost actor plan", turns, assessments)
 	}
 }
@@ -390,7 +390,7 @@ func TestPurposePreservedIsIndependentOfContinuityAndSatisfaction(t *testing.T) 
 				if err != nil || attempts != 2 || active.Plan == nil || active.Plan.UnresolvedFocus != purpose {
 					t.Fatal("focus-only correction failed", err)
 				}
-			} else if !errors.Is(err, errContinuityRejected) || attempts != maxReconciliationAttempts || active.Plan.UnresolvedFocus != "" {
+			} else if !errors.Is(err, errContinuityRejected) || attempts != testReconciliationDeadlineAttempts || active.Plan.UnresolvedFocus != "" {
 				t.Fatal("missing purpose bypassed evaluation", err)
 			}
 		})

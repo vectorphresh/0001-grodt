@@ -259,6 +259,45 @@
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 64
+                    },
+                    "collected_evidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "result_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "reference": {
+                            "type": "object",
+                            "properties": {
+                              "partition": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "version": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "path": {
+                                "type": "string",
+                                "maxLength": 256
+                              }
+                            },
+                            "required": [
+                              "partition",
+                              "version",
+                              "path"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "result_id"
+                        ],
+                        "additionalProperties": false
+                      }
                     }
                   },
                   "required": [

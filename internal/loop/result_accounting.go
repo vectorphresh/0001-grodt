@@ -60,15 +60,18 @@ func validateResultAccounting(input reconciliationInput, decision reconciliation
 		switch entry.Disposition {
 		case "update":
 			step, ok := updated[entry.StepID]
-			if !ok || decision.Action != "progress" {
-				return fmt.Errorf("result %q claims update for step %q but no matching step update exists. Use action progress and include that step's supported outcome, evidence and remaining gaps", entry.ResultID, entry.StepID)
+			if decision.Action != "progress" {
+				return fmt.Errorf("result %q has disposition=update but action=%q; update accounting requires action=progress. Preserve any supported matching step update and set action=progress. If no additional progress is supported, set disposition=no_progress with a reason, updates=[], current_step=\"\", and unresolved_focus=null", entry.ResultID, decision.Action)
+			}
+			if !ok {
+				return fmt.Errorf("result %q claims update for step %q but no matching step update exists. Include an updates entry for this step with its supported outcome, evidence_refs and remaining gaps. If the step is unchanged, set this accounting entry's disposition=no_progress with a reason; if no procedural changes are needed, also set action=no_progress, updates=[], current_step=\"\", and unresolved_focus=null", entry.ResultID, entry.StepID)
 			}
 			if strings.TrimSpace(step.Outcome) == "" || len(step.Evidence) == 0 {
 				return fmt.Errorf("result %q step update %q requires a supported outcome and accepted evidence_refs. If no additional progress is supported, use no_progress accounting with a specific reason", entry.ResultID, entry.StepID)
 			}
 		case "no_progress":
 			if _, ok := updated[entry.StepID]; ok {
-				return fmt.Errorf("result %q claims unchanged step %q but that step is updated. Use update accounting for contributed progress or identify the distinct unchanged accepted step", entry.ResultID, entry.StepID)
+				return fmt.Errorf("result %q claims unchanged step %q but that step is updated. Result accounting describes contribution to a step, not achievement of the overall objective or profit. Choose one consistent repair: (1) preserve the supported step update, set this result_accounting entry's disposition=update, and provide a nonempty outcome describing what the evidence establishes; the step may remain active and the objective incomplete; or (2) if there is no additional supported progress, remove this step from updates and retain disposition=no_progress with a reason. If no other procedural changes are needed, also set action=no_progress, updates=[], current_step=\"\", and unresolved_focus=null. Do not return the same combination of a step update and no_progress accounting for that step", entry.ResultID, entry.StepID)
 			}
 		default:
 			return fmt.Errorf("result %q disposition must be update or no_progress", entry.ResultID)

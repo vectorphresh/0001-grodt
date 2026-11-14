@@ -18,6 +18,37 @@ import (
 func initialCorrectionPlan() runstate.Plan {
 	return runstate.Plan{Description: "Inspect account and evaluate opportunities", Status: "active", Steps: []runstate.Step{{ID: "inspect", Description: "Inspect account", Status: "active"}, {ID: "evaluate", Description: "Evaluate opportunities", Status: "pending"}}, CurrentStep: "inspect"}
 }
+
+func TestExclusiveHostCorrectionRepairsBeyondTenResponses(t *testing.T) {
+	p, fixture := toolsHarness(t, nil, false)
+	if err := p.Store.RevisePlan(context.Background(), initialCorrectionPlan()); err != nil {
+		t.Fatal(err)
+	}
+	turns := 0
+	p.Client = nativeClient(func(_ context.Context, r toolcall.Request) (toolcall.Response, error) {
+		turns++
+		if turns == 18 {
+			return toolcall.Response{Text: "Continue from accepted plan"}, nil
+		}
+		plan := initialCorrectionPlan()
+		plan.Revision = 1
+		response := planCall(t, fmt.Sprintf("repair-%d", turns), planCommand{Action: "revise", Plan: &plan})
+		if turns <= 16 {
+			// Mixed calls never execute, even after the former ten-response cap.
+			response.Calls = append(response.Calls, toolRequest(r, "undispatched"))
+		}
+		return response, nil
+	})
+	if _, err := p.Handle(context.Background(), &State{Objective: "Inspect"}); err != nil {
+		t.Fatal(err)
+	}
+	if turns != 18 || fixture.Calls.Load() != 0 {
+		t.Fatalf("repair aborted or dispatched rejected calls: %d %d", turns, fixture.Calls.Load())
+	}
+	if !strings.Contains(string(mustEncode(p.Store.Journal())), "exclusive_host_correction_retrying") {
+		t.Fatal("continued repair not audited")
+	}
+}
 func assertHostCorrection(t *testing.T, r toolcall.Request) {
 	t.Helper()
 	if len(r.Tools) != 1 || r.Tools[0].Name != planningTool {
@@ -261,9 +292,15 @@ func TestExclusiveHostCorrectionBypassAndExhaustion(t *testing.T) {
 				t.Fatal(err)
 			}
 			before := p.Store.Snapshot()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 			turns := 0
 			p.Client = nativeClient(func(_ context.Context, r toolcall.Request) (toolcall.Response, error) {
 				turns++
+				if turns == hostCorrectionRetryInterval+2 {
+					cancel()
+					return toolcall.Response{}, ctx.Err()
+				}
 				plan := initialCorrectionPlan()
 				plan.Revision = 1
 				if turns == 1 {
@@ -286,15 +323,15 @@ func TestExclusiveHostCorrectionBypassAndExhaustion(t *testing.T) {
 					return response, nil
 				}
 			})
-			_, err := p.Handle(context.Background(), &State{Objective: "Inspect"})
-			if err == nil || !strings.Contains(err.Error(), "exclusive host correction exhausted") || turns != maxHostCorrectionResponses+1 || fixture.Calls.Load() != 0 {
+			_, err := p.Handle(ctx, &State{Objective: "Inspect"})
+			if err == nil || !errors.Is(err, context.Canceled) || turns != hostCorrectionRetryInterval+2 || fixture.Calls.Load() != 0 {
 				t.Fatalf("correction bypassed or unbounded: %v turns=%d calls=%d", err, turns, fixture.Calls.Load())
 			}
 			after := p.Store.Snapshot()
 			if !reflect.DeepEqual(before.Tasks, after.Tasks) || !reflect.DeepEqual(before.Knowledge, after.Knowledge) {
 				t.Fatal("failed correction changed accepted state")
 			}
-			if !strings.Contains(string(mustEncode(p.Store.Journal())), "exclusive_host_correction_exhausted") {
+			if !strings.Contains(string(mustEncode(p.Store.Journal())), "exclusive_host_correction_retrying") {
 				t.Fatal("exhaustion not audited")
 			}
 		})
@@ -313,7 +350,7 @@ func TestExclusiveHostCorrectionUsableResponseOpportunities(t *testing.T) {
 			response.Calls = append(response.Calls, toolRequest(r, "companion"))
 			return response, nil
 		}
-		if turns <= maxHostCorrectionResponses+3 {
+		if turns <= hostCorrectionRetryInterval+3 {
 			assertHostCorrection(t, r)
 		}
 		switch turns {
@@ -321,9 +358,9 @@ func TestExclusiveHostCorrectionUsableResponseOpportunities(t *testing.T) {
 			return toolcall.Response{}, recoveryGenerationFailure{}
 		case 3:
 			return toolcall.Response{}, nil
-		case maxHostCorrectionResponses + 3:
+		case hostCorrectionRetryInterval + 3:
 			return planCall(t, "corrected", planCommand{Action: "revise", Plan: &plan}), nil
-		case maxHostCorrectionResponses + 4:
+		case hostCorrectionRetryInterval + 4:
 			return toolcall.Response{Text: "Plan saved."}, nil
 		default:
 			plan.Steps[0].Status = "satisfied"
@@ -333,7 +370,7 @@ func TestExclusiveHostCorrectionUsableResponseOpportunities(t *testing.T) {
 	if _, err := p.Handle(context.Background(), &State{Objective: "Inspect"}); err != nil {
 		t.Fatal(err)
 	}
-	if turns != maxHostCorrectionResponses+4 || fixture.Calls.Load() != 0 {
+	if turns != hostCorrectionRetryInterval+4 || fixture.Calls.Load() != 0 {
 		t.Fatal("unusable responses consumed opportunities or companion executed")
 	}
 	if !strings.Contains(string(mustEncode(p.Store.Journal())), `"code":"exclusive_host_correction_accepted"`) || !strings.Contains(string(mustEncode(p.Store.Journal())), `"attempt":10`) {
@@ -353,17 +390,27 @@ func TestExclusiveHostCorrectionOversizedAndAmbiguousBoundaries(t *testing.T) {
 					response := planCall(t, "initial", planCommand{Action: "revise", Plan: &plan})
 					if mode == "ambiguous" {
 						response.Calls = append(response.Calls, planCall(t, "second", planCommand{Action: "revise", Plan: &plan}).Calls[0])
+						response.Calls = append(response.Calls, toolRequest(r, "undispatched"))
 					} else {
 						response.Calls[0].Arguments = mustEncode(map[string]string{"oversized_marker": strings.Repeat("x", mcp.MaxArgumentBytes+1)})
 						response.Calls = append(response.Calls, toolRequest(r, "companion"))
 					}
 					return response, nil
 				}
-				if mode == "ambiguous" {
-					t.Fatal("ambiguous planning operations allowed another turn")
-				}
 				if turns == 2 {
 					assertHostCorrection(t, r)
+					if mode == "ambiguous" {
+						if !strings.Contains(r.Instructions, "unaccepted_planning_candidates") || !strings.Contains(r.Instructions, "exactly one grodt_manage_plan") {
+							t.Fatal("ambiguity repair context missing")
+						}
+						active, _ := p.Store.Active()
+						if active.Plan != nil || fixture.Calls.Load() != 0 {
+							t.Fatal("ambiguous batch partially committed")
+						}
+						response := planCall(t, "repeated", planCommand{Action: "revise", Plan: &plan})
+						response.Calls = append(response.Calls, planCall(t, "second-again", planCommand{Action: "revise", Plan: &plan}).Calls[0])
+						return response, nil
+					}
 					if !strings.Contains(r.Instructions, `"reconstruct_arguments":true`) || strings.Contains(r.Instructions, "oversized_marker") || strings.Contains(fmt.Sprint(r.Messages), "oversized_marker") {
 						t.Fatal("oversized request retained or reconstructed by host")
 					}
@@ -372,14 +419,18 @@ func TestExclusiveHostCorrectionOversizedAndAmbiguousBoundaries(t *testing.T) {
 					}
 					return planCall(t, "reconstructed", planCommand{Action: "revise", Plan: &plan}), nil
 				}
+				if mode == "ambiguous" && turns == 3 {
+					assertHostCorrection(t, r)
+					return planCall(t, "selected", planCommand{Action: "revise", Plan: &plan}), nil
+				}
 				return toolcall.Response{Text: "Plan reconstructed."}, nil
 			})
 			_, err := p.Handle(context.Background(), &State{Objective: "Inspect"})
+			wantTurns := 3
 			if mode == "ambiguous" {
-				if err == nil || !strings.Contains(err.Error(), "ambiguous exclusive host operations") || turns != 1 {
-					t.Fatalf("ambiguous operations accepted: %v", err)
-				}
-			} else if err != nil {
+				wantTurns = 4
+			}
+			if err != nil || turns != wantTurns {
 				t.Fatal(err)
 			}
 			if fixture.Calls.Load() != 0 {

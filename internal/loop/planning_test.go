@@ -17,6 +17,18 @@ func planCall(t *testing.T, id string, cmd planCommand) toolcall.Response {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Simulate actor output against its mutation schema, which excludes
+	// acquisition history maintained by the host.
+	var wire map[string]any
+	_ = json.Unmarshal(raw, &wire)
+	if plan, ok := wire["plan"].(map[string]any); ok {
+		if steps, ok := plan["steps"].([]any); ok {
+			for _, item := range steps {
+				delete(item.(map[string]any), "collected_evidence")
+			}
+		}
+	}
+	raw, _ = json.Marshal(wire)
 	return toolcall.Response{Calls: []toolcall.Call{{ID: id, Name: planningTool, Arguments: raw}}}
 }
 func TestActorPlansAcceptedEvidenceAndCompletionAcrossCycles(t *testing.T) {

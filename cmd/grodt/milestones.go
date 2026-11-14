@@ -142,12 +142,15 @@ func (r *milestoneReporter) drain() (err error) {
 				return err
 			}
 			message := map[string]string{
+				"model_context_repair":                "Model context limit exceeded; reducing request context and retrying without replaying tools.",
 				"plan_initialization_required":        "Plan required: objective incomplete; only planning is available.",
 				"plan_renewal_required":               "Plan renewal required: objective incomplete; ordinary execution paused.",
 				"exclusive_host_correction_started":   "Planning correction requested: mixed batch; no calls dispatched and plan not applied.",
 				"exclusive_host_correction_rejected":  "Planning correction rejected; no calls dispatched.",
 				"exclusive_host_correction_accepted":  "Planning correction accepted.",
 				"exclusive_host_correction_exhausted": "Planning correction exhausted.",
+				"exclusive_host_correction_retrying":  "Planning correction still unresolved; continuing repair with retained state.",
+				"planning_correction_retrying":        "Planning proposals remain invalid; continuing correction.",
 				"exclusive_host_correction_unusable":  "Planning correction failed: unusable actor responses.",
 				"exclusive_host_operations_ambiguous": "Planning batch rejected: multiple planning operations; no calls dispatched.",
 				"planning_correction_exhausted":       "Planning correction exhausted: 32 rejections since the last acceptance.",

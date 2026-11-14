@@ -58,6 +58,11 @@ func (s *Store) ModelJSON() json.RawMessage {
 				refs := append([]EvidenceReference(nil), t.Plan.Evidence...)
 				for _, step := range t.Plan.Steps {
 					refs = append(refs, step.Evidence...)
+					for _, collected := range step.CollectedEvidence {
+						if collected.Reference != nil {
+							refs = append(refs, *collected.Reference)
+						}
+					}
 					if step.Status == "satisfied" {
 						v.EstablishedSteps = append(v.EstablishedSteps, step.ID)
 					} else if step.Status != "failed" && step.Status != "invalidated" {

@@ -6,11 +6,28 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vectorphresh/0001-grodt/internal/openai"
 	runstate "github.com/vectorphresh/0001-grodt/internal/state"
 	"github.com/vectorphresh/0001-grodt/internal/toolcall"
 )
+
+// Failure fixtures opt into a deadline to bound deliberately unrepaired proposals.
+// Application reconciliation retries until accepted or caller cancellation.
+const testReconciliationDeadlineAttempts = 32
+const reconciliationRunBudget = time.Hour
+
+func expireReconciliationAfter(p *ToolProvider, attempts int) {
+	started := p.Store.Snapshot().Intrinsic.StartedAt
+	p.repairDeadline = started.Add(reconciliationRunBudget)
+	p.repairNow = func() time.Time {
+		if p.reconciliationCheckpoint != nil && p.reconciliationCheckpoint.Attempts >= attempts {
+			return started.Add(reconciliationRunBudget)
+		}
+		return started
+	}
+}
 
 func reconciliationFixture(t *testing.T) *ToolProvider {
 	t.Helper()
@@ -21,6 +38,7 @@ func reconciliationFixture(t *testing.T) *ToolProvider {
 		return json.RawMessage(`{"status":"ignored"}`)
 	}}
 	p, _ := toolsHarness(t, []runstate.Definition{{Name: "configuration", Schema: json.RawMessage(`{"type":"object"}`), Initial: json.RawMessage(`{}`), Module: module}, {Name: "unrelated", Schema: json.RawMessage(`{"type":"object"}`), Initial: json.RawMessage(`{"private_context":"unrelated_partition_sentinel"}`), Module: &eventModule{}}}, false)
+	expireReconciliationAfter(p, testReconciliationDeadlineAttempts)
 	p.Evaluator = structuredClient{call: func(context.Context, string, string, json.RawMessage, openai.JSONSpecification) (openai.JSONResult, error) {
 		return openai.JSONResult{JSON: json.RawMessage(`{"continuity_valid":true,"purpose_preserved":true,"satisfied":true,"rationale":"Supported procedural continuity."}`)}, nil
 	}}
@@ -33,6 +51,7 @@ func reconciliationResult(t *testing.T, action string, updates []progressUpdate,
 		if err := json.Unmarshal(mustJSON(t, update.Step), &step); err != nil {
 			t.Fatal(err)
 		}
+		delete(step, "collected_evidence") // host-owned, outside mutation schema
 		for _, key := range []string{"completion_criteria", "outcome"} {
 			if _, ok := step[key]; !ok {
 				step[key] = ""
@@ -360,7 +379,7 @@ func TestReconciliationCorrectsContradictoryNoProgress(t *testing.T) {
 		if calls == 2 {
 			return reconciliationResult(t, "no_progress", []progressUpdate{{Step: runstate.Step{ID: "baseline", Description: "Establish baseline", Status: "active"}}}, "baseline"), nil
 		}
-		if !strings.Contains(instructions, "no-progress decision contains procedural changes") || !strings.Contains(instructions, `set updates=[], current_step="", and unresolved_focus=null`) {
+		if !strings.Contains(instructions, "no-progress decision contains procedural changes") || !strings.Contains(instructions, `set action=no_progress, updates=[], current_step="", and unresolved_focus=null`) || !strings.Contains(instructions, "disposition=no_progress and a reason for each accepted result") {
 			t.Fatal("correction lacks an actionable no-progress response")
 		}
 		return reconciliationResult(t, "no_progress", nil, ""), nil

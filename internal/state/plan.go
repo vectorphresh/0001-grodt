@@ -26,6 +26,7 @@ type Plan struct {
 	CurrentStep        string              `json:"current_step,omitempty"`
 }
 type Step struct {
+	CollectedEvidence  []CollectedEvidence `json:"collected_evidence,omitempty"`
 	ID                 string              `json:"id"`
 	Description        string              `json:"description"`
 	CompletionCriteria string              `json:"completion_criteria,omitempty"`
@@ -110,6 +111,11 @@ func (s *Store) ResolveEvidence(ref EvidenceReference) (json.RawMessage, error) 
 // steps cannot be rewritten or removed; explicit invalidation preserves their
 // description, criteria, outcome and original provenance.
 func (s *Store) CheckPlan(plan Plan) error {
+	var err error
+	plan, err = s.PreserveCollectedEvidence(plan)
+	if err != nil {
+		return err
+	}
 	t, ok := s.Active()
 	if !ok || t.AgentWork != nil || t.Work != nil {
 		return errors.New("no active reasoning task")
@@ -153,10 +159,20 @@ func (s *Store) CheckPlan(plan Plan) error {
 		}
 	}
 	seen := map[string]bool{}
-	validateEvidence := func(refs []EvidenceReference) error {
+	validateEvidence := func(owner string, refs []EvidenceReference) error {
 		for _, ref := range refs {
 			if _, err := s.ResolveEvidence(ref); err != nil {
-				return err
+				partition, exists := s.snapshot.Knowledge[ref.Partition]
+				repair := ""
+				current := ref
+				current.Version = partition.Metadata.Version
+				if exists && current != ref {
+					if _, resolveErr := s.ResolveEvidence(current); resolveErr == nil {
+						encoded, _ := json.Marshal(current)
+						repair = fmt.Sprintf(". The same path resolves at the current version: %s. Recheck its current value against the claim before replacing the reference; the value may have changed", encoded)
+					}
+				}
+				return fmt.Errorf("%s evidence_refs (partition=%q, path=%q, referenced_version=%d, current_version=%d, partition_exists=%t, freshness=%q): %w. Preserve unchanged accepted steps and their historical references; for changed steps or new completion claims, use resolvable current evidence%s", owner, ref.Partition, ref.Path, ref.Version, partition.Metadata.Version, exists, s.EvidenceFreshness(ref), err, repair)
 			}
 		}
 		return nil
@@ -164,7 +180,7 @@ func (s *Store) CheckPlan(plan Plan) error {
 	if plan.Status == "satisfied" && (plan.Outcome == "" || len(plan.Evidence) == 0 || len(plan.InformationGaps) > 0 || plan.UnresolvedFocus != "") {
 		return errors.New("satisfaction requires outcome, evidence, and no gaps")
 	}
-	if err := validateEvidence(plan.Evidence); err != nil {
+	if err := validateEvidence("plan", plan.Evidence); err != nil {
 		return err
 	}
 	for _, step := range plan.Steps {
@@ -172,7 +188,7 @@ func (s *Store) CheckPlan(plan Plan) error {
 			return errors.New("invalid or duplicate step")
 		}
 		seen[step.ID] = true
-		if step.Status == "pending" && len(step.Evidence) > 0 {
+		if step.Status == "pending" && (len(step.Evidence) > 0 || len(step.CollectedEvidence) > 0) {
 			return fmt.Errorf("step %q has collected evidence and cannot remain pending. Set status to active for started work, partial for an established outcome with a specific unresolved requirement, or satisfied only when evidence supports completion", step.ID)
 		}
 		if prev, exists := old[step.ID]; exists && (prev.Status == "satisfied" || prev.Status == "invalidated") {
@@ -183,10 +199,17 @@ func (s *Store) CheckPlan(plan Plan) error {
 			}
 			continue
 		}
+		// Previously accepted provenance remains historical even while work
+		// is unfinished. Unrelated knowledge refreshes must not force a
+		// rewrite. Any change, including a new satisfaction claim, still
+		// requires resolvable current evidence below.
+		if prev, exists := old[step.ID]; exists && reflect.DeepEqual(step, prev) {
+			continue
+		}
 		if step.Status == "satisfied" && (step.Outcome == "" || len(step.Evidence) == 0 || len(step.InformationGaps) > 0) {
 			return errors.New("step satisfaction requires outcome, evidence, and no gaps")
 		}
-		if err := validateEvidence(step.Evidence); err != nil {
+		if err := validateEvidence(fmt.Sprintf("step %q", step.ID), step.Evidence); err != nil {
 			return err
 		}
 	}
@@ -226,6 +249,11 @@ func (s *Store) RevisePlan(ctx context.Context, plan Plan) error {
 		return err
 	}
 	active, _ := s.Active()
+	var err error
+	plan, err = s.PreserveCollectedEvidence(plan)
+	if err != nil {
+		return err
+	}
 	plan.NormalizeCurrentStep(active.Plan)
 	if err := s.CheckPlan(plan); err != nil {
 		return err
@@ -293,6 +321,11 @@ func (s *Store) RecordReconciliation(taskID string, evidence, proposed json.RawM
 		Proposed json.RawMessage `json:"proposed_changes"`
 		Error    string          `json:"error,omitempty"`
 	}{evidence, proposed, code})})
+}
+
+// Repair checkpoints are host-owned audit data, never accepted domain evidence.
+func (s *Store) RecordReconciliationCheckpoint(taskID string, checkpoint json.RawMessage) {
+	s.appendEntry(Entry{Kind: "reconciliation_checkpoint", TaskID: taskID, Data: append(json.RawMessage(nil), checkpoint...)})
 }
 
 // StepUnresolved identifies work that can still advance the procedure.

@@ -125,6 +125,57 @@ func TestCollectedStepEvidenceRequiresStartedStatus(t *testing.T) {
 	}
 }
 
+func TestUnchangedUnfinishedStepRetainsHistoricalEvidence(t *testing.T) {
+	for _, status := range []string{"active", "partial", "failed"} {
+		t.Run(status, func(t *testing.T) {
+			ctx := context.Background()
+			s := planStore(t)
+			plan := Plan{Description: "Inspect and assess", Status: "active", Steps: []Step{
+				{ID: "inspect", Description: "Inspect configuration", Status: status, Outcome: "Setting acquired", Evidence: []EvidenceReference{{Partition: "world", Version: 0, Path: "/setting"}}, InformationGaps: []string{"Assessment remains"}},
+				{ID: "assess", Description: "Assess configuration", Status: "pending"},
+			}}
+			if err := s.RevisePlan(ctx, plan); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.Admit(ctx, Source{Kind: "user", ID: "refresh"}, json.RawMessage(`"change"`)); err != nil {
+				t.Fatal(err)
+			}
+			active, _ := s.Active()
+			plan = *active.Plan
+			plan.Steps[1].Status = "partial"
+			plan.Steps[1].Outcome = "New setting acquired"
+			plan.Steps[1].Evidence = []EvidenceReference{{Partition: "world", Version: 1, Path: "/setting"}}
+			plan.Steps[1].InformationGaps = []string{"Assessment incomplete"}
+			if err := s.RevisePlan(ctx, plan); err != nil {
+				t.Fatalf("unrelated update rejected historical provenance: %v", err)
+			}
+			active, _ = s.Active()
+			if active.Plan.Steps[0].Evidence[0].Version != 0 {
+				t.Fatal("historical reference silently rebased")
+			}
+			for _, completion := range []bool{false, true} {
+				candidate := *active.Plan
+				candidate.Steps = append([]Step(nil), candidate.Steps...)
+				candidate.Steps[0].Outcome = "A new claim"
+				if completion {
+					candidate.Steps[0].Status = "satisfied"
+					candidate.Steps[0].InformationGaps = nil
+				}
+				before := s.JSON()
+				err := s.RevisePlan(ctx, candidate)
+				if err == nil || !bytes.Equal(before, s.JSON()) {
+					t.Fatal("changed historical claim accepted or mutated state")
+				}
+				for _, detail := range []string{`step "inspect"`, `partition="world"`, `path="/setting"`, "referenced_version=0", "current_version=1", "resolvable current evidence", `"partition":"world","version":1,"path":"/setting"`, "Recheck its current value", "value may have changed"} {
+					if !strings.Contains(err.Error(), detail) {
+						t.Fatalf("missing actionable detail %q: %v", detail, err)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestRootCompletionDoesNotAutoSatisfyChildren(t *testing.T) {
 	ctx := context.Background()
 	s := planStore(t)

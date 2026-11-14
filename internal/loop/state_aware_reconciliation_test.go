@@ -250,6 +250,14 @@ func TestReconciliationRejectedSatisfactionReplayAndTaskChange(t *testing.T) {
 		t.Fatal("repeated rejection grew plan or lost unresolved focus")
 	}
 	// The evaluator cannot cause a proposal to commit to a different active task.
+	// Use a fresh run: the rejected replay above has exhausted its run deadline.
+	reconciler := p.Reconciler
+	p = reconciliationFixture(t)
+	seedProcedure(t, p, "inspect", "Characterize observations")
+	if _, err := p.Store.Admit(ctx, runstate.Source{Kind: "mcp", ID: "read"}, json.RawMessage(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	p.Reconciler = reconciler
 	p.Evaluator = structuredClient{call: func(context.Context, string, string, json.RawMessage, openai.JSONSpecification) (openai.JSONResult, error) {
 		if _, err := p.Store.Push(ctx, "Different task", ""); err != nil {
 			t.Fatal(err)

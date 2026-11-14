@@ -171,7 +171,7 @@ func TestReconciliationPurposeResolutionRequiresEvidence(t *testing.T) {
 				if err != nil || calls != 1 || active.Plan.UnresolvedFocus != "" || active.Plan.Revision != 2 {
 					t.Fatalf("supported resolution rejected: %v", err)
 				}
-			} else if !errors.Is(err, errContinuityRejected) || calls != maxReconciliationAttempts || !reflect.DeepEqual(before.Tasks, p.Store.Snapshot().Tasks) {
+			} else if !errors.Is(err, errContinuityRejected) || calls != testReconciliationDeadlineAttempts || !reflect.DeepEqual(before.Tasks, p.Store.Snapshot().Tasks) {
 				t.Fatalf("unsupported purpose resolution accepted: %v evaluations=%d", err, calls)
 			}
 		})
@@ -205,7 +205,7 @@ func TestReconciliationPurposeNotInferredFromBroadObjective(t *testing.T) {
 			}}
 			err := p.reconcile(context.Background(), p.Store.Snapshot(), "Get quotes.", nil)
 			if invent {
-				if !errors.Is(err, errContinuityRejected) || evaluations != maxReconciliationAttempts {
+				if !errors.Is(err, errContinuityRejected) || evaluations != testReconciliationDeadlineAttempts {
 					t.Fatal("invented purpose was accepted")
 				}
 			} else if err != nil || evaluations != 1 {
@@ -278,7 +278,7 @@ func TestReconciliationPurposeAcrossAccountQuotesOrdersSetupChain(t *testing.T) 
 			if active.Plan == nil || active.Plan.UnresolvedFocus != purpose || !strings.Contains(request.Instructions, `"unresolved_focus":"`+purpose+`"`) {
 				t.Fatal("purpose did not survive into next actor request")
 			}
-			if len(active.Plan.Steps) != 1 || active.Plan.CurrentStep != "inspect" || active.Plan.Revision != 2 {
+			if len(active.Plan.Steps) != 1 || active.Plan.CurrentStep != "inspect" || active.Plan.Revision != uint64(2+turn) {
 				t.Fatal("successive acquisitions generated next actions or duplicate procedural state")
 			}
 		}

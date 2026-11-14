@@ -94,9 +94,11 @@ func toolsHarness(t *testing.T, definitions []runstate.Definition, allowHTTP boo
 	if err = store.BeginCycle(ctx); err != nil {
 		t.Fatal(err)
 	}
-	return &ToolProvider{Runtime: runtime, Store: store, Observer: &stateflow.Client{Store: store}, CheckObjective: func(context.Context, State) (ObjectiveEvaluation, error) {
+	p := &ToolProvider{Runtime: runtime, Store: store, Observer: &stateflow.Client{Store: store}, CheckObjective: func(context.Context, State) (ObjectiveEvaluation, error) {
 		return ObjectiveEvaluation{Rationale: "Fixture objective remains incomplete."}, nil
-	}}, fixture
+	}}
+	expireReconciliationAfter(p, testReconciliationDeadlineAttempts)
+	return p, fixture
 }
 
 // Execution fixtures enter with a previously accepted procedure. Plan-specific

@@ -2,6 +2,7 @@ package loop
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -34,19 +35,25 @@ func TestPlanningAcceptanceResetsRejectionAllowance(t *testing.T) {
 				}
 				expectedAcceptances = 4
 			case "rejections_exhaust":
-				appendRejects(maxHostCorrectionResponses)
+				appendRejects(hostCorrectionRetryInterval)
 				expectFailure = true
 			case "pending_external_does_not_bypass":
 				appendRejects(1)
-				for i := 0; i < maxHostCorrectionResponses-1; i++ {
+				for i := 0; i < hostCorrectionRetryInterval-1; i++ {
 					operations = append(operations, "external")
 				}
 				expectFailure = true
 			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 			turns := 0
 			p.Client = nativeClient(func(_ context.Context, r toolcall.Request) (toolcall.Response, error) {
 				turns++
 				if turns > len(operations) {
+					if expectFailure {
+						cancel()
+						return toolcall.Response{}, ctx.Err()
+					}
 					return toolcall.Response{Text: "Finished planning."}, nil
 				}
 				op := operations[turns-1]
@@ -65,9 +72,9 @@ func TestPlanningAcceptanceResetsRejectionAllowance(t *testing.T) {
 				}
 				return planCall(t, fmt.Sprintf("plan-%d", turns), planCommand{Action: "revise", Plan: &plan}), nil
 			})
-			_, err := p.Handle(context.Background(), &State{Objective: "Inspect"})
+			_, err := p.Handle(ctx, &State{Objective: "Inspect"})
 			if expectFailure {
-				if err == nil || !strings.Contains(err.Error(), "exclusive host correction exhausted") || strings.Contains(err.Error(), "preflight") || turns != len(operations) {
+				if err == nil || !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "preflight") || turns != len(operations)+1 {
 					t.Fatalf("incorrect exhaustion: err=%v turns=%d", err, turns)
 				}
 			} else if err != nil || turns != len(operations)+1 {

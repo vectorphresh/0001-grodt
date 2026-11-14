@@ -93,9 +93,15 @@ func TestPlanGateRejectsEmptyOrUnsupportedCompletedPlans(t *testing.T) {
 	for _, mode := range []string{"empty", "unsupported_completed", "external", "final"} {
 		t.Run(mode, func(t *testing.T) {
 			p, fixture := toolsHarness(t, nil, false)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 			turns := 0
 			p.Client = nativeClient(func(_ context.Context, request toolcall.Request) (toolcall.Response, error) {
 				turns++
+				if turns > hostCorrectionRetryInterval {
+					cancel()
+					return toolcall.Response{}, ctx.Err()
+				}
 				if len(request.Tools) != 1 || request.Tools[0].Name != planningTool {
 					t.Fatal("nonplanning tool advertised")
 				}
@@ -111,9 +117,9 @@ func TestPlanGateRejectsEmptyOrUnsupportedCompletedPlans(t *testing.T) {
 				}
 				return planCall(t, "bad", planCommand{Action: "revise", Plan: &plan}), nil
 			})
-			_, err := p.Handle(context.Background(), &State{Objective: "Inspect"})
+			_, err := p.Handle(ctx, &State{Objective: "Inspect"})
 			active, _ := p.Store.Active()
-			if err == nil || turns != maxHostCorrectionResponses || fixture.Calls.Load() != 0 || active.Plan != nil {
+			if err == nil || turns != hostCorrectionRetryInterval+1 || fixture.Calls.Load() != 0 || active.Plan != nil {
 				t.Fatalf("gate bypassed: err=%v turns=%d calls=%d", err, turns, fixture.Calls.Load())
 			}
 		})

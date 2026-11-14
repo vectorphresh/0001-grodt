@@ -12,23 +12,24 @@ import (
 	"github.com/vectorphresh/0001-grodt/internal/toolcall"
 )
 
-const maxHostCorrectionResponses = 10
+const hostCorrectionRetryInterval = 10
 
 // Rejected arguments are temporary correction data, never accepted plan state.
 
 type hostCorrection struct {
-	Operation       string          `json:"operation"`
-	TaskID          string          `json:"task_id"`
-	Arguments       json.RawMessage `json:"attempted_arguments,omitempty"`
-	Reconstruct     bool            `json:"reconstruct_arguments,omitempty"`
-	ArgumentBytes   int             `json:"argument_bytes"`
-	ArgumentLimit   int             `json:"argument_limit_bytes"`
-	Diagnostics     []string        `json:"validation_feedback"`
-	Attempts        int             `json:"-"`
-	ActorIntent     string          `json:"actor_intent,omitempty"`
-	IntentBytes     int             `json:"actor_intent_bytes,omitempty"`
-	RequirePlan     bool            `json:"require_unresolved_steps,omitempty"`
-	PlanInstruction string          `json:"plan_instruction,omitempty"`
+	Operation       string            `json:"operation"`
+	TaskID          string            `json:"task_id"`
+	Arguments       json.RawMessage   `json:"attempted_arguments,omitempty"`
+	Candidates      []json.RawMessage `json:"unaccepted_planning_candidates,omitempty"`
+	Reconstruct     bool              `json:"reconstruct_arguments,omitempty"`
+	ArgumentBytes   int               `json:"argument_bytes"`
+	ArgumentLimit   int               `json:"argument_limit_bytes"`
+	Diagnostics     []string          `json:"validation_feedback"`
+	Attempts        int               `json:"-"`
+	ActorIntent     string            `json:"actor_intent,omitempty"`
+	IntentBytes     int               `json:"actor_intent_bytes,omitempty"`
+	RequirePlan     bool              `json:"require_unresolved_steps,omitempty"`
+	PlanInstruction string            `json:"plan_instruction,omitempty"`
 }
 
 func (p *ToolProvider) newHostCorrection(ctx context.Context, call toolcall.Call) *hostCorrection {

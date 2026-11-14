@@ -22,6 +22,7 @@ import (
 
 	"github.com/vectorphresh/0001-grodt/internal/config"
 	"github.com/vectorphresh/0001-grodt/internal/openai"
+	runstate "github.com/vectorphresh/0001-grodt/internal/state"
 )
 
 type testClient struct {
@@ -158,9 +159,9 @@ func TestOneCycleAndCycleLimit(t *testing.T) {
 	}
 }
 
-func TestFailuresAbortWithoutInferenceOrRetry(t *testing.T) {
+func TestNonTimeoutFailuresAbortWithoutInferenceOrRetry(t *testing.T) {
 	for _, stage := range []string{"generation", "evaluation", "decode"} {
-		for _, cause := range []error{context.DeadlineExceeded, context.Canceled, errors.New("private-sensitive-error")} {
+		for _, cause := range []error{context.Canceled, errors.New("private-sensitive-error")} {
 			g, e := 0, 0
 			c := testClient{
 				prompt: func(context.Context, string) (openai.TextResult, error) {
@@ -287,7 +288,8 @@ func TestCLIConfigurationAndTrace(t *testing.T) {
 	defer server.Close()
 	path := configFile(t, "openai:\n  environment:\n    OPENAI_BASE_URL: "+server.URL+"/v1\n")
 	var out, diag bytes.Buffer
-	if err := run(context.Background(), []string{"--trace", "--config", path, "request " + key}, &out, &diag); err != nil {
+	traceRoot := t.TempDir()
+	if err := run(context.Background(), []string{"--trace", "--trace-dir", traceRoot, "--config", path, "request " + key}, &out, &diag); err != nil {
 		t.Fatal(err)
 	}
 	if out.String() != "result\n" || calls.Load() != 2 {
@@ -300,6 +302,27 @@ func TestCLIConfigurationAndTrace(t *testing.T) {
 	}
 	if strings.Contains(diag.String(), key) || strings.Contains(diag.String(), server.URL) {
 		t.Fatal("credential/configuration printed")
+	}
+	dirs, err := os.ReadDir(traceRoot)
+	if err != nil || len(dirs) != 1 {
+		t.Fatalf("missing run artifacts: %v", err)
+	}
+	for _, name := range []string{"final-state.json", "final-journal.json"} {
+		data, err := os.ReadFile(filepath.Join(traceRoot, dirs[0].Name(), name))
+		if err != nil || !json.Valid(data) || strings.Contains(string(data), key) {
+			t.Fatalf("invalid final artifact %s: %v", name, err)
+		}
+		if name == "final-state.json" {
+			var state runstate.Snapshot
+			if err := json.Unmarshal(data, &state); err != nil || len(state.Tasks.Records) == 0 {
+				t.Fatal("final artifact captured initialization rather than exit state", err)
+			}
+		} else {
+			var journal []runstate.Entry
+			if err := json.Unmarshal(data, &journal); err != nil || len(journal) == 0 {
+				t.Fatal("final artifact lost journal", err)
+			}
+		}
 	}
 	t.Chdir(filepath.Dir(path))
 	if err := run(context.Background(), []string{"request"}, io.Discard, io.Discard); err != nil {

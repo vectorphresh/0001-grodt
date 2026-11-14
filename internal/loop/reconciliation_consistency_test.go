@@ -15,6 +15,7 @@ import (
 func consistencyFixture(t *testing.T) *ToolProvider {
 	t.Helper()
 	p, _ := toolsHarness(t, []runstate.Definition{{Name: "observations", Schema: json.RawMessage(`{"type":"object"}`), Initial: json.RawMessage(`{"query":{"status":"open"},"items":[],"isError":false}`), Module: &eventModule{}}}, false)
+	expireReconciliationAfter(p, testReconciliationDeadlineAttempts)
 	plan := runstate.Plan{Description: "Inspect items and evaluate remaining work", Status: "active", UnresolvedFocus: "Item inspection is missing; remaining evaluation is incomplete", CurrentStep: "evaluate", Steps: []runstate.Step{
 		{ID: "inspect", Description: "Inspect matching items", CompletionCriteria: "Obtain the items matching the open query", Status: "satisfied", Outcome: "Inspection succeeded with zero matching items", Evidence: []runstate.EvidenceReference{{Partition: "observations", Version: 0, Path: "/items"}}},
 		{ID: "evaluate", Description: "Evaluate remaining work", Status: "active", InformationGaps: []string{"Evaluation is incomplete"}},
@@ -118,7 +119,7 @@ func TestReconciliationInconsistentNoProgressExhaustsCorrectionLimit(t *testing.
 		return continuityResult(false, "Missing-inspection focus contradicts established inspection."), nil
 	}}
 	err := p.reconcile(context.Background(), before, "Continue", nil)
-	if !errors.Is(err, errContinuityRejected) || calls != maxReconciliationAttempts || evaluations != maxReconciliationAttempts {
+	if !errors.Is(err, errContinuityRejected) || calls != testReconciliationDeadlineAttempts || evaluations != testReconciliationDeadlineAttempts {
 		t.Fatalf("consistency bypassed or incorrect retry limit: %v, calls=%d, evaluations=%d", err, calls, evaluations)
 	}
 	after := p.Store.Snapshot()
@@ -197,7 +198,7 @@ func TestReconciliationEmptyObservationScopeAndCoverage(t *testing.T) {
 				if err != nil || evaluations != 1 {
 					t.Fatalf("successful empty inspection rejected: %v", err)
 				}
-			} else if !errors.Is(err, errContinuityRejected) || evaluations != maxReconciliationAttempts {
+			} else if !errors.Is(err, errContinuityRejected) || evaluations != testReconciliationDeadlineAttempts {
 				t.Fatalf("unsupported inference accepted: %v evaluations=%d", err, evaluations)
 			}
 		})
@@ -225,7 +226,7 @@ func TestReconciliationCorrectionFeedbackBounded(t *testing.T) {
 	p.Evaluator = structuredClient{call: func(context.Context, string, string, json.RawMessage, openai.JSONSpecification) (openai.JSONResult, error) {
 		return continuityResult(false, strings.Repeat("界", 512)), nil
 	}}
-	if err := p.reconcile(context.Background(), p.Store.Snapshot(), "Continue", nil); !errors.Is(err, errContinuityRejected) || calls != maxReconciliationAttempts {
+	if err := p.reconcile(context.Background(), p.Store.Snapshot(), "Continue", nil); !errors.Is(err, errContinuityRejected) || calls != testReconciliationDeadlineAttempts {
 		t.Fatalf("unexpected correction result: %v calls=%d", err, calls)
 	}
 }
@@ -266,7 +267,7 @@ func TestReconciliationDowngradedStateRequiresConsistency(t *testing.T) {
 		}
 		return continuityResult(false, "Retained focus claims completion despite the downgraded unresolved inspection."), nil
 	}}
-	if err := p.reconcile(ctx, before, "Continue", nil); !errors.Is(err, errContinuityRejected) || evaluations != maxReconciliationAttempts {
+	if err := p.reconcile(ctx, before, "Continue", nil); !errors.Is(err, errContinuityRejected) || evaluations != testReconciliationDeadlineAttempts {
 		t.Fatalf("downgraded representation bypassed consistency: %v evaluations=%d", err, evaluations)
 	}
 	if after := p.Store.Snapshot(); !reflect.DeepEqual(before.Tasks, after.Tasks) {

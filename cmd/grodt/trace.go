@@ -68,6 +68,12 @@ func (c observedClient) traceResponse(result any, start time.Time, err error) {
 	var failureFeedback string
 	if err != nil {
 		message = "model request failed"
+		if errors.Is(err, openai.ErrInvalidModelResponse) {
+			message = openai.ErrInvalidModelResponse.Error()
+		}
+		if errors.Is(err, openai.ErrRequestProcessing) {
+			message = openai.ErrRequestProcessing.Error()
+		}
 		var provider *openai.ProviderRequestError
 		if errors.As(err, &provider) {
 			message = provider.Error()

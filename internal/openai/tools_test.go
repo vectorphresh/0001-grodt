@@ -3,12 +3,35 @@ package openai_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
 
+	llm "github.com/vectorphresh/0001-grodt/internal/openai"
 	"github.com/vectorphresh/0001-grodt/internal/toolcall"
 )
+
+func TestNativeToolResponseFailuresAreRetryableWithoutPartialCalls(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		want       error
+	}{
+		{"truncated_json", `{"choices":`, llm.ErrRequestProcessing},
+		{"incomplete_call", `{"choices":[{"finish_reason":"length","message":{"role":"assistant","tool_calls":[{"id":"unaccepted","type":"function","function":{"name":"alias","arguments":"{}"}}]}}]}`, llm.ErrInvalidModelResponse},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.body))
+			}, 0)
+			result, err := client.(toolcall.Client).GenerateWithTools(context.Background(), toolcall.Request{Messages: []toolcall.Message{{Role: "user", Text: "Inspect"}}})
+			if !errors.Is(err, tc.want) || len(result.Calls) != 0 {
+				t.Fatalf("failure lost classification or exposed partial calls: %+v %v", result, err)
+			}
+		})
+	}
+}
 
 func TestNativeToolsWireAndContinuation(t *testing.T) {
 	requests := 0

@@ -158,6 +158,13 @@ type ProviderRequestError struct {
 	Response json.RawMessage
 }
 
+// ErrRequestProcessing preserves a retryable SDK transport/response failure
+// without retaining its raw error, credentials, URLs or response body.
+var ErrRequestProcessing = errors.New("openai: request or response processing failed")
+
+// ErrInvalidModelResponse marks an unusable model response, never accepted work.
+var ErrInvalidModelResponse = errors.New("openai: invalid model response")
+
 func (e *ProviderRequestError) Error() string {
 	return fmt.Sprintf("openai: provider request failed (HTTP %d)", e.StatusCode)
 }
@@ -182,5 +189,5 @@ func requestError(err error) error {
 		}
 		return &ProviderRequestError{StatusCode: provider.StatusCode, Response: response}
 	}
-	return errors.New("openai: request or response processing failed")
+	return ErrRequestProcessing
 }

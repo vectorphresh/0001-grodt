@@ -7,13 +7,14 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vectorphresh/0001-grodt/internal/openai"
 	runstate "github.com/vectorphresh/0001-grodt/internal/state"
 	"github.com/vectorphresh/0001-grodt/internal/structured"
 )
 
-func TestReconciliationThirtyTwoAttemptsAndPerOperationReset(t *testing.T) {
+func TestReconciliationRunDeadlineAndPerOperationRepair(t *testing.T) {
 	for _, boundary := range []string{"host", "continuity"} {
 		for _, repair := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/repair=%v", boundary, repair), func(t *testing.T) {
@@ -68,6 +69,13 @@ func TestReconciliationThirtyTwoAttemptsAndPerOperationReset(t *testing.T) {
 func TestReconciliationSchemaLimitIsFive(t *testing.T) {
 	p := reconciliationFixture(t)
 	calls := 0
+	started := p.Store.Snapshot().Intrinsic.StartedAt
+	p.repairNow = func() time.Time {
+		if calls >= 5 {
+			return started.Add(reconciliationRunBudget)
+		}
+		return started
+	}
 	p.Reconciler = structuredClient{call: func(context.Context, string, string, json.RawMessage, openai.JSONSpecification) (openai.JSONResult, error) {
 		calls++
 		return openai.JSONResult{JSON: json.RawMessage(`{}`)}, nil

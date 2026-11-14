@@ -14,6 +14,12 @@ import (
 func TestRepeatedWorkRequestsReplanWithoutCountingCorrections(t *testing.T) {
 	p := reconciliationFixture(t)
 	seedProcedure(t, p, "inspect", "Inspect configuration")
+	active, _ := p.Store.Active()
+	started := *active.Plan
+	started.Steps[0].Status = "active"
+	if err := p.Store.RevisePlan(context.Background(), started); err != nil {
+		t.Fatal(err)
+	}
 	actor, proposals := 0, 0
 	p.Client = nativeClient(func(_ context.Context, request toolcall.Request) (toolcall.Response, error) {
 		actor++

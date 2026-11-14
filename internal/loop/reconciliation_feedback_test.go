@@ -150,7 +150,7 @@ func TestReconciliationRepeatedCriteriaRejectionPreservesAcceptedPlan(t *testing
 		}
 		return reconciliationResult(t, "progress", []progressUpdate{{Step: runstate.Step{ID: "inspect", Description: "Inspect configuration", CompletionCriteria: "Invented criteria", Status: "active"}}}, ""), nil
 	}}
-	if err := p.reconcile(context.Background(), p.Store.Snapshot(), "Inspect", nil); err == nil || calls != maxReconciliationAttempts {
+	if err := p.reconcile(context.Background(), p.Store.Snapshot(), "Inspect", nil); err == nil || calls != testReconciliationDeadlineAttempts {
 		t.Fatal("correction limit changed or invalid result accepted")
 	}
 	if string(before) != string(mustJSON(t, p.Store.Snapshot().Tasks)) {
