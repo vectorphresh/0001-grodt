@@ -265,7 +265,7 @@ func executeWithCapabilities(ctx context.Context, objective, initial string, cli
 		if _, ok := client.(toolcall.Client); !ok {
 			return errors.New("LLM client does not support tools")
 		}
-		providers = []loop.Provider{&loop.ToolProvider{Client: observed, Observer: withState, Evaluator: observed, Reconciler: observed, Runtime: capabilities, Store: store, FlushMilestones: milestones.drain, StrategyContextBytes: strategyContextBytes}}
+		providers = []loop.Provider{&loop.ToolProvider{Client: observed, Observer: withState, Runtime: capabilities, Store: store, FlushMilestones: milestones.drain, StrategyContextBytes: strategyContextBytes}}
 	}
 	return runObjective(ctx, objective, initial, providers, withState, output, status, &metrics, store)
 }

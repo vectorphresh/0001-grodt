@@ -1,0 +1,43 @@
+@startuml 09-admit-modules
+title 09 - Store.Admit -> wasm module projection (internal/state/store.go:220)
+autonumber "<b>[09.]"
+skinparam maxMessageSize 240
+
+participant "Admit" as A
+participant "admit\n(store.go:228)" as AD
+participant "wasm Module\n(wasm/module.go:103)" as W
+participant "validation.Validator" as V
+participant "host request queue" as HQ
+
+A -> AD : admit(ctx, source, payload, nil)
+AD -> AD : check(ctx) / hostExhausted /\nsource kind / payload validity
+AD -> AD : EventSequence++ -> Event{ID, TaskID}
+AD -> AD : appendEntry(event)
+loop each module definition
+  AD -> W : Process(ctx, partitionValue, event)
+  W --> AD : raw result / RuntimeError
+  alt runtime error
+    AD -> AD : fail(name, runtime_error) -> continue
+  end
+  AD -> AD : decodeResult -> Result{Status, Requests, Progress}
+  AD -> AD : checkRequests / progress task check
+  alt Status = mutation
+    AD -> AD : apply(p.Value, r) candidate
+    AD -> V : Validate(ctx, schema, candidate)\n(validator.go)
+    alt invalid
+      AD -> AD : fail(mutation_rejected) -> continue
+    end
+    AD -> AD : partition value = candidate, version++
+  end
+  AD -> AD : update Metadata (stale=false, failures=0)
+  AD -> AD : appendEntry(processed/mutation)
+  AD -> HQ : queueRequests(ctx, requests)
+end
+AD --> A : Event
+A -> A : drainHostWork(ctx)
+note right of HQ
+  Host requests include http (http.go:46
+  executeHTTP) and knowledge reduction
+  (contracts/reduction.go:16 Reduce)
+end note
+@enduml

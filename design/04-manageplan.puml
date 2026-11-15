@@ -1,0 +1,42 @@
+@startuml 04-manageplan
+title 04 - managePlan (internal/loop/planning.go:42)
+autonumber "<b>[04.]"
+skinparam maxMessageSize 240
+
+participant "managePlan" as MP
+participant "decodePlanningCommand\n(planning.go:137)" as DEC
+participant "Store" as S
+participant "applyPlanPatch\n(plan_patch.go:60)" as AP
+participant "requireSnapshotSteps\n(plan_patch.go:20)" as RSS
+participant "acceptPlan\n(planning.go:193)" as AC
+
+MP -> DEC : decodePlanningCommand(ctx, call.Arguments)
+DEC --> MP : planCommand{Action, Plan, Patch, TaskID, Reason}
+MP -> MP : validatePlanCommand (planning.go:162)
+MP -> S : Active()
+alt action = create_child
+  MP -> S : Push(child task, initial) (tasks.go:37)
+  MP --> MP : handled=true, message
+else action = abandon_child
+  MP -> S : AbandonChild (tasks.go:117)
+  MP --> MP : handled=true
+else action = complete_child
+  MP -> S : Complete (tasks.go:107)
+  MP --> MP : handled=true
+else action = patch
+  MP -> AP : applyPlanPatch(active.Plan, patch)
+  AP --> MP : candidate plan
+  MP -> AC : acceptPlan(ctx, candidate, "patch")
+  AC --> MP : message / planErr
+else action = revise
+  MP -> RSS : requireSnapshotSteps(active.Plan, next)
+  RSS --> MP : ok / error (stale snapshot)
+  MP -> AC : acceptPlan(ctx, next, "revision")
+  AC --> MP : message / planErr
+else unknown action
+  MP --> MP : handled=true, error message
+end
+note right of AC
+  Continues in 05-acceptplan.puml
+end note
+@enduml

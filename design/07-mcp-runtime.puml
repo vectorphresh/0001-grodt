@@ -1,0 +1,40 @@
+@startuml 07-mcp-runtime
+title 07 - MCP Runtime Preflight & Invoke (internal/mcp/client.go)
+autonumber "<b>[07.]"
+skinparam maxMessageSize 240
+
+participant "Runtime" as R
+participant "MCP session\n(mark3labs/mcp-go)" as MCP
+participant "wire recorder\n(wire.go)" as W
+participant "validation\n(validator.go)" as V
+
+== Preflight (client.go:249) ==
+R -> R : batch limit / budget checks
+loop each call
+  R -> R : tool known? args schema-valid?\nsensitive-path check
+end
+R --> R : PreflightResult{Allowed, Rejected}
+
+== Invoke (client.go:280) ==
+R -> R : Preflight single call
+alt rejected
+  R --> R : Outcome{Failure: preflight}
+end
+R -> W : begin wire capture
+R -> MCP : CallTool(ctx, request) (client.go:128 connect)
+MCP --> R : raw result
+R -> W : end capture (wire/*.json)
+alt wire overflow
+  R --> R : Outcome{Failure: wire_overflow}
+end
+R -> V : validate result against tool output schema
+alt invalid
+  R --> R : Outcome{Failure: schema}
+else ok
+  R --> R : Outcome{Result}
+end
+note right of R
+  Failure kinds feed tools.go
+  recovery + hostCorrection messages
+end note
+@enduml

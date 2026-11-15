@@ -1,0 +1,46 @@
+@startuml 08-reconciliation
+title 08 - reconcile: procedural reconciliation loop (internal/loop/reconciliation.go:260)
+autonumber "<b>[08.]"
+skinparam maxMessageSize 240
+
+participant "reconcile" as RC
+participant "Store" as S
+participant "structured.Generate\n(structured.go:34)" as SG
+participant "Reconciler\n(stateflow client)" as REC
+participant "reconciliationPlan\n(reconciliation.go:398)" as RP
+participant "acceptReconciliationPlan\n(planning.go:215)" as ARP
+participant "checkpointReconciliationRepair\n(reconciliation.go:381)" as CRR
+
+RC -> S : RecordReconciliationCheckpoint(before_batch, input, calls)
+note right : checkpoint created once; resumed\non re-entry after failure
+loop until accepted or deadline
+  RC -> SG : Generate(reconciliationSchema,\nfeedback + unaccepted_correction_candidate)
+  SG -> REC : PromptWithSpecification(...)
+  REC --> SG : JSONResult
+  SG --> RC : proposed / err
+  alt generate error
+    RC -> CRR : checkpoint repair state + correction
+    RC -> RC : backoff 1s, continue
+  end
+  RC -> RP : reconciliationPlan(input, proposed)
+  note right : decision shape, result accounting,\nno_progress / progress checks
+  alt invalid delta
+    RC -> CRR : repair + reconciliationHostCorrection
+    RC -> RC : continue
+  end
+  RC -> ARP : acceptReconciliationPlan(ctx, plan, input)
+  ARP -> ARP : acceptPlanWithContext -> 05-acceptplan.puml
+  alt accept error
+    RC -> CRR : repair + reconciliationSemanticCorrection
+    RC -> RC : continue
+  end
+  RC -> S : FinishAttempt(taskID, progress, reason)\n(attempt.go:37)
+  RC -> S : RecordReconciliation(accepted)
+  RC --> RC : return nil
+end
+note right of RC
+  Deadline exceeded -> errReconciliationDeadline
+  joined with last error; caller (tools.go)
+  turns it into hostCorrection
+end note
+@enduml

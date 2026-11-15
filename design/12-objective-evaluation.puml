@@ -1,0 +1,29 @@
+@startuml 12-objective-evaluation
+title 12 - Cycle-level goal evaluation (cmd/grodt/objective.go:29)
+autonumber "<b>[12.]"
+skinparam maxMessageSize 240
+
+participant "runObjective" as O
+participant "evaluate\n(objective.go:29)" as EV
+participant "structured.Generate" as SG
+participant "stateflow.Client" as CL
+participant "stateflow.Observe\n(client.go:41)" as OB
+participant "Store" as S
+
+O -> EV : evaluate(ctx, client, objective, initial, state)
+EV -> SG : Generate(evaluationSchema, infer)
+SG -> CL : RequestMutation(feedback, data, spec)
+CL --> SG : JSONResult
+SG --> EV : result.JSON
+EV -> EV : decodeEvaluation\n(exact keys achieved/rationale)
+EV -> OB : Observe("goal_evaluation", accepted, err)
+OB -> S : Admit(llm operation event) -> 09-admit-modules.puml
+OB --> EV : err?
+EV --> O : GoalEvaluation{Achieved, Rationale}
+alt Achieved
+  O -> S : CompleteObjective (objective.go:229)
+  O --> O : return nil
+else not achieved
+  O -> O : rebuild history, next cycle
+end
+@enduml

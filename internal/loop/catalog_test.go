@@ -33,12 +33,12 @@ func TestCatalogPagingContinuation(t *testing.T) {
 		requests++
 		pinned := false
 		for _, def := range request.Tools {
-			if def.Name == planningTool {
+			if def.Name == strategyContextTool {
 				pinned = true
 			}
 		}
 		if !pinned {
-			t.Fatal("planning tool inaccessible on active page")
+			t.Fatal("strategy context tool inaccessible on active page")
 		}
 		if len(request.Tools) > 128 {
 			t.Fatal("provider tool limit exceeded")
@@ -56,7 +56,7 @@ func TestCatalogPagingContinuation(t *testing.T) {
 			if f.Calls.Load() != 0 || request.Messages[2].CallID != "select" {
 				t.Fatal("page selection executed external work or lost result")
 			}
-			if len(request.Tools) != 83 || request.Tools[0].Name != "grodt_tool_126" {
+			if len(request.Tools) != 81 || request.Tools[0].Name != "grodt_tool_127" {
 				t.Fatal("wrong second page")
 			}
 			return toolcall.Response{Calls: []toolcall.Call{{ID: "invoke", Name: "grodt_tool_144", Arguments: json.RawMessage(`{}`)}}}, nil
@@ -102,7 +102,7 @@ func TestCatalogSmallAndInvalidSelections(t *testing.T) {
 	}
 }
 
-func TestPlanningToolPinnedAcrossCatalogBoundaries(t *testing.T) {
+func TestStrategyContextToolPinnedAcrossCatalogBoundaries(t *testing.T) {
 	for _, size := range []int{0, 127, 128, 129, 205, 253, 254, 256} {
 		tools := make([]toolcall.Definition, size)
 		for i := range tools {
@@ -114,15 +114,15 @@ func TestPlanningToolPinnedAcrossCatalogBoundaries(t *testing.T) {
 		}
 		seen := map[string]bool{}
 		for page := 0; page < pages; page++ {
-			defs, index := catalogPage(tools, page, planDefinition())
+			defs, index := catalogPage(tools, page, strategyContextDefinition())
 			if len(defs) > 128 {
 				t.Fatal("provider limit exceeded")
 			}
-			planning, selector := 0, 0
+			pinned, selector := 0, 0
 			for _, def := range defs {
 				switch def.Name {
-				case planningTool:
-					planning++
+				case strategyContextTool:
+					pinned++
 				case selectToolPage:
 					selector++
 				default:
@@ -132,10 +132,10 @@ func TestPlanningToolPinnedAcrossCatalogBoundaries(t *testing.T) {
 					seen[def.Name] = true
 				}
 			}
-			if planning != 1 {
-				t.Fatal("planning tool hidden by catalog navigation")
+			if pinned != 1 {
+				t.Fatal("strategy context tool hidden by catalog navigation")
 			}
-			if pages > 1 && (selector != 1 || !strings.Contains(index, "all pages: "+planningTool)) {
+			if pages > 1 && (selector != 1 || !strings.Contains(index, "all pages: "+strategyContextTool)) {
 				t.Fatal("navigation or pinned-tool index missing")
 			}
 			if size+1 > 128 {

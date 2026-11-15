@@ -64,3 +64,11 @@ func compactActorMessages(messages []toolcall.Message, budget int) []toolcall.Me
 	}
 	return messages
 }
+
+func mustEncode(value any) json.RawMessage {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		panic("procedural serialization invariant")
+	}
+	return raw
+}

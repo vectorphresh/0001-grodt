@@ -1,0 +1,49 @@
+@startuml 01-startup
+title 01 - Startup & cycle loop (cmd/grodt/main.go, objective.go)
+autonumber "<b>[01.]"
+skinparam maxMessageSize 220
+
+participant "main" as M
+participant "run\n(main.go:47)" as R
+participant "config.Resolver" as C
+participant "runstate.Store" as S
+participant "executeWithCapabilities\n(main.go:252)" as E
+participant "runObjectiveWithEvaluator\n(objective.go:120)" as O
+participant "loop.Process\n(loop.go:44)" as L
+participant "ToolProvider" as T
+
+M -> R : run(ctx, args, stdout, stderr)
+R -> C : config.Load(path) (config.go:34)
+C --> R : Resolver
+R -> R : stateCfg = resolver.State()\nstateCfg.PlanningDisabled() (state.go:24)
+R -> R : clientFromResolver(resolver) (main.go:208)
+note right: openai.NewClient (openai/client.go:27)
+R -> S : runstate.New / wasm.Load (store.go:40)
+alt persistence path set
+  R -> S : restoreKnowledge -> RestoreKnowledge (store.go:175)
+end
+R -> E : executeWithCapabilities(..., StrategyContextBytes, PlanningDisabled)
+E -> E : milestoneReporter + observedClient\n+ stateflow.Client wrap
+E -> T : new ToolProvider{Client, Observer, Evaluator,\nReconciler, Runtime, Store, PlanningDisabled}
+E -> O : runObjective(...) (objective.go:113)
+O -> S : Push(objective, initial) (tasks.go:37)
+O -> S : Admit(user event) (store.go:220) -> 09-admit-modules.puml
+loop cycle 1..maxCycles
+  O -> S : BeginCycle (tasks.go:72)
+  O -> L : Process(ctx, &State, providers)
+  L -> T : Handle(ctx, state) -> 02-toolprovider-turn.puml
+  T --> L : handled
+  alt state.ObjectiveEvaluation set (plan boundary)
+    O -> O : reuse evaluation (objective.go:207)
+  else
+    O -> O : evaluate(...) -> 12-objective-evaluation.puml
+  end
+  alt achieved
+    O -> S : CompleteObjective (objective.go:229)
+    O --> M : nil
+  else not achieved, cycle < max
+    O -> O : history = [response, rationale]
+  end
+end
+O -> S : End(status) (tasks.go:126)
+@enduml

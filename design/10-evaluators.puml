@@ -1,0 +1,49 @@
+@startuml 10-evaluators
+title 10 - LLM evaluators & structured generation (plan_intent.go, structured.go, openai)
+autonumber "<b>[10.]"
+skinparam maxMessageSize 240
+
+participant "validatePlanIntent\n(plan_intent.go:136)" as VPI
+participant "actorPlanCapture\n(plan_intent.go:244)" as APC
+participant "structured.Generate\n(structured.go:34)" as SG
+participant "validation.Validator" as V
+participant "Evaluator /\nReconciler\n(stateflow.Client)" as CL
+participant "openai client\n(client.go)" as OAI
+participant "Store" as S
+
+== validatePlanIntent ==
+VPI -> VPI : planIntentChanges(old, proposed, source)\n(plan_intent.go:75)
+alt no changes
+  VPI --> VPI : nil
+end
+VPI -> VPI : revision_reason required, <=512 bytes
+VPI -> S : ProjectKnowledge(...)\n(knowledge_projection.go:76)
+VPI -> SG : Generate(planRevisionSchema, infer)
+SG -> CL : PromptWithSpecification(...)
+CL -> OAI : RequestMutation -> wire/trace
+OAI --> CL : JSONResult
+CL --> SG : candidate
+SG -> V : Validate(schema, candidate)
+alt invalid
+  SG -> SG : feedback loop (MaxStructuredAttempts)
+end
+SG --> VPI : decision{revision_valid, rationale}
+VPI -> S : RecordPlanEvaluation(input, result)
+alt !revision_valid
+  VPI --> VPI : error "plan revision rejected"
+end
+
+== actorPlanCapture (first plan from state) ==
+APC -> SG : Generate(actorPlanSchema, ...)
+SG --> APC : ActorPlanProposal
+APC -> VPI : validatePlanIntent(nil, proposal)
+APC --> APC : proposal (or hostCorrection{Intent})
+
+== structured.Generate contract ==
+note right of SG
+  Loop: infer(ctx, feedback) -> JSON valid?
+  -> Validator.Validate -> valid? return :
+  feedback = {candidate, validation, instruction}
+  Exhausted -> ErrAttemptsExhausted
+end note
+@enduml

@@ -1,0 +1,39 @@
+@startuml 05-acceptplan
+title 05 - acceptPlan -> acceptPlanWithContext (planning.go:193/230)
+autonumber "<b>[05.]"
+skinparam maxMessageSize 240
+
+participant "acceptPlan" as AC
+participant "Store" as S
+participant "validatePlanIntent\n(plan_intent.go:136)" as VPI
+participant "acceptPlanWithContext\n(planning.go:230)" as APW
+participant "structured.Generate" as SG
+participant "Evaluator\n(cmd/grodt/objective.go)" as EV
+
+AC -> S : Active()
+alt !PlanningDisabled
+  AC -> AC : unfinished-step gate\n(no step_order 1 -> reject)
+  AC -> VPI : validatePlanIntent(ctx, p, active.Plan, next)\n-> 10-evaluators.puml
+  VPI --> AC : intent / error
+end
+AC -> APW : acceptPlanWithContext(ctx, plan, nil, unchanged)
+APW -> S : PreserveCollectedEvidence(plan) (collected_evidence.go:20)
+APW -> S : NormalizeCurrentStep
+alt !PlanningDisabled
+  APW -> S : CheckPlan(plan) (plan.go:113)
+  APW -> APW : claims / claimPlan / continuity checks
+end
+opt Evaluator != nil
+  APW -> SG : Generate(completionSchema, prompt)
+  SG -> SG : openai.RequestMutation -> 10-evaluators.puml
+  SG --> APW : CompletionDecision
+  APW -> EV : evaluator structured block (planning.go:277+)
+end
+alt PlanningDisabled
+  APW -> S : RevisePlanUnchecked(plan)\n(kill-switch persistence path)
+else
+  APW -> S : RevisePlan(plan) (plan.go:247)
+end
+S --> APW : ok / ErrPlanRevisionConflict
+APW --> AC : message / error
+@enduml

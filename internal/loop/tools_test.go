@@ -94,26 +94,19 @@ func toolsHarness(t *testing.T, definitions []runstate.Definition, allowHTTP boo
 	if err = store.BeginCycle(ctx); err != nil {
 		t.Fatal(err)
 	}
-	p := &ToolProvider{Runtime: runtime, Store: store, Observer: &stateflow.Client{Store: store}, CheckObjective: func(context.Context, State) (ObjectiveEvaluation, error) {
-		return ObjectiveEvaluation{Rationale: "Fixture objective remains incomplete."}, nil
-	}}
-	expireReconciliationAfter(p, testReconciliationDeadlineAttempts)
+	p := &ToolProvider{Runtime: runtime, Store: store, Observer: &stateflow.Client{Store: store}}
 	return p, fixture
 }
 
-// Execution fixtures enter with a previously accepted procedure. Plan-specific
-// fixtures use toolsHarness to exercise initialization explicitly.
+// Execution fixtures remain distinct from plain harnesses so plan-era tests
+// keep a single construction point.
 func toolsExecutionHarness(t *testing.T, definitions []runstate.Definition, allowHTTP bool) (*ToolProvider, *testmcp.Server) {
-	p, fixture := toolsHarness(t, definitions, allowHTTP)
-	if err := p.Store.RevisePlan(context.Background(), initialCorrectionPlan()); err != nil {
-		t.Fatal(err)
-	}
-	return p, fixture
+	return toolsHarness(t, definitions, allowHTTP)
 }
 func toolRequest(r toolcall.Request, id string) toolcall.Call {
-	name := "grodt_tool_001" // Deliberate bypass attempts when only planning is advertised.
+	name := "grodt_tool_001"
 	for _, tool := range r.Tools {
-		if tool.Name != planningTool {
+		if !strings.HasPrefix(tool.Name, "grodt_") {
 			name = tool.Name
 			break
 		}

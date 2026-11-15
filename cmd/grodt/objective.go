@@ -171,16 +171,6 @@ func runObjectiveWithEvaluator(ctx context.Context, objective, initial string, p
 		}
 	}()
 	history := []string{}
-	for _, provider := range providers {
-		if tools, ok := provider.(*loop.ToolProvider); ok {
-			previous := tools.CheckObjective
-			tools.CheckObjective = func(ctx context.Context, state loop.State) (loop.ObjectiveEvaluation, error) {
-				result, err := evaluator(ctx, client, objective, initial, state)
-				return loop.ObjectiveEvaluation{Achieved: result.Achieved, Rationale: result.Rationale}, err
-			}
-			defer func() { tools.CheckObjective = previous }()
-		}
-	}
 	for cycle := 1; cycle <= maxCycles; cycle++ {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -204,11 +194,7 @@ func runObjectiveWithEvaluator(ctx context.Context, objective, initial string, p
 		}
 		var evaluation GoalEvaluation
 		var err error
-		if state.ObjectiveEvaluation != nil && state.ObjectiveEvaluation.Achieved {
-			evaluation = GoalEvaluation{Achieved: true, Rationale: state.ObjectiveEvaluation.Rationale}
-		} else {
-			evaluation, err = evaluator(ctx, client, objective, initial, state)
-		}
+		evaluation, err = evaluator(ctx, client, objective, initial, state)
 		if err != nil {
 			return safeCycleError(ctx, err)
 		}

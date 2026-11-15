@@ -1,0 +1,53 @@
+@startuml 02-toolprovider-turn
+title 02 - ToolProvider.Handle turn loop (internal/loop/tools.go:68)
+autonumber "<b>[02.]"
+skinparam maxMessageSize 240
+
+participant "Handle\n(tools.go:68)" as H
+participant "Store" as S
+participant "catalogPage\n(catalog.go:12)" as CG
+participant "Client\n(openai/tools.go:17)" as LLM
+participant "managePlan\n(planning.go:42)" as MP
+participant "manageStrategyContext\n(strategy_context.go:330)" as MSC
+participant "Runtime\n(mcp/client.go)" as RT
+participant "reconcile\n(reconciliation.go:260)" as RC
+
+H -> S : Active()
+opt !PlanningDisabled && no unresolved steps
+  H -> H : plan-boundary gate -> 03-plan-gate.puml
+end
+loop turn 1..
+  H -> CG : catalogPage(catalog, page, planDef, strategyDef)
+  CG --> H : tool page + index (select_tool_page if >128)
+  H -> LLM : GenerateWithTools(request)
+  note right : context overflow -> compactActorMessages\n(context_repair.go:53) retry
+  LLM --> H : Response{Text, Calls}
+  alt >1 planning call (ambiguous)
+    H -> H : hostCorrection{Reconstruct} -> 03-plan-gate.puml
+  else pendingHost set
+    H -> H : exclusive correction -> 03-plan-gate.puml
+  else plan call + companion calls
+    H -> H : newHostCorrection (host_correction.go:35)\nbatch not dispatched
+  else !PlanningDisabled && text+calls
+    H -> H : actorPlanCapture -> 03-plan-gate.puml
+  end
+  alt no calls
+    H --> H : final text -> return handled
+  end
+  H -> MP : managePlan(ctx, calls) -> 04-manageplan.puml
+  alt handled
+    alt planErr && PlanningDisabled
+      note right : kill-switch: report only,\nno correction loop (tools.go:389)
+    else planErr
+      H -> H : correction loop -> 03-plan-gate.puml
+    end
+    H -> H : continue
+  end
+  H -> MSC : manageStrategyContext -> 11-strategy-context.puml
+  H -> RT : Preflight(ctx, calls) (client.go:249) -> 07-mcp-runtime.puml
+  H -> H : dispatch batch -> 06-tool-dispatch.puml
+  opt Reconciler != nil && !PlanningDisabled
+    H -> RC : reconcile(beforeBatch, text, calls)\n-> 08-reconciliation.puml
+  end
+end
+@enduml

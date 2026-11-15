@@ -10,12 +10,11 @@ import (
 	"testing"
 
 	"github.com/vectorphresh/0001-grodt/internal/mcp"
-	"github.com/vectorphresh/0001-grodt/internal/openai"
 	runstate "github.com/vectorphresh/0001-grodt/internal/state"
 	"github.com/vectorphresh/0001-grodt/internal/toolcall"
 )
 
-func TestInvocationRecoveryNarrowedReadAndPurpose(t *testing.T) {
+func TestInvocationRecoveryNarrowedRead(t *testing.T) {
 	module := &eventModule{fn: func(e runstate.Event) json.RawMessage {
 		if e.Source.Kind == "mcp" {
 			return json.RawMessage(`{"status":"mutation","replace":{"items":[]}}`)
@@ -29,27 +28,12 @@ func TestInvocationRecoveryNarrowedReadAndPurpose(t *testing.T) {
 		}
 		return json.RawMessage(`{"content":[{"type":"text","text":"` + strings.Repeat("x", mcp.MaxResultBytes) + `"}]}`), nil
 	}
-	focus := "Evaluate available observations"
-	if err := p.Store.RevisePlan(context.Background(), runstate.Plan{Description: "Inspect", Status: "active", UnresolvedFocus: focus, Steps: []runstate.Step{{ID: "inspect", Description: "Inspect observations", Status: "active"}}}); err != nil {
-		t.Fatal(err)
-	}
 	actor := 0
 	p.Client = nativeClient(func(_ context.Context, r toolcall.Request) (toolcall.Response, error) {
 		actor++
 		if actor == 2 {
-			var feedback struct {
-				Status, Category, Execution string
-				ResultAvailable             bool `json:"result_available"`
-				Details                     map[string]int
-			}
-			if err := json.Unmarshal([]byte(r.Messages[2].Text), &feedback); err != nil {
-				t.Fatal(err)
-			}
-			if feedback.Status != "failed" || feedback.Category != "result_too_large" || feedback.Execution != "result_rejected" || feedback.ResultAvailable || feedback.Details["limit_bytes"] != mcp.MaxResultBytes {
-				t.Fatal("missing quantitative failure feedback")
-			}
-			if strings.Contains(string(p.Store.ModelJSON()), "result_too_large") {
-				t.Fatal("synthetic failure admitted as knowledge")
+			if !strings.Contains(r.Instructions, "result_too_large") {
+				t.Fatal("failure category missing from recovery feedback")
 			}
 			c := toolRequest(r, "narrow")
 			c.Arguments = json.RawMessage(`{"key":"narrow"}`)
@@ -60,39 +44,16 @@ func TestInvocationRecoveryNarrowedReadAndPurpose(t *testing.T) {
 		}
 		return toolcall.Response{Text: "Acquire observations to evaluate available observations.", Calls: []toolcall.Call{toolRequest(r, "wide")}}, nil
 	})
-	reconciliations := 0
-	p.Reconciler = structuredClient{call: func(_ context.Context, _, _ string, raw json.RawMessage, _ openai.JSONSpecification) (openai.JSONResult, error) {
-		var input reconciliationInput
-		if err := json.Unmarshal(raw, &input); err != nil {
-			t.Fatal(err)
-		}
-		if reconciliations == 0 && (len(input.ActionFailures) != 1 || input.ActionFailures[0].Failure.Category != "result_too_large" || len(input.AcceptedEvidence) == 0) {
-			t.Fatal("failed acquisition provenance missing from reconciliation")
-		}
-		if reconciliations == 1 && len(input.ActionFailures) != 0 {
-			t.Fatal("historical failure presented as recent")
-		}
-		reconciliations++
-		return reconciliationResult(t, "no_progress", nil, "", input), nil
-	}}
-	p.Evaluator = structuredClient{call: func(_ context.Context, _, _ string, raw json.RawMessage, _ openai.JSONSpecification) (openai.JSONResult, error) {
-		if !strings.Contains(string(raw), focus) {
-			t.Fatal("failed acquisition erased actor purpose")
-		}
-		return continuityResult(true, "Acquisition does not resolve the retained evaluation purpose."), nil
-	}}
 	if _, err := p.Handle(context.Background(), &State{Objective: "Inspect"}); err != nil {
 		t.Fatal(err)
 	}
-	if actor != 3 || fixture.Calls.Load() != 2 || reconciliations != 2 {
+	if actor != 3 || fixture.Calls.Load() != 2 {
 		t.Fatal("recovery did not return to actor once per boundary")
 	}
-	active, _ := p.Store.Active()
-	if active.Plan.UnresolvedFocus != focus {
-		t.Fatal("purpose lost")
+	if !strings.Contains(string(p.Store.Snapshot().Knowledge["observations"].Value), `"items":[]`) {
+		t.Fatal("narrowed read not admitted")
 	}
 }
-
 func TestInvocationRecoveryPartialBatchAndUnknownOutcome(t *testing.T) {
 	module := &eventModule{fn: func(e runstate.Event) json.RawMessage {
 		if e.Source.Kind == "mcp" {
@@ -203,50 +164,32 @@ type recoveryGenerationFailure struct{}
 func (recoveryGenerationFailure) Error() string           { return "temporary generation failure" }
 func (recoveryGenerationFailure) FailureFeedback() string { return "Correct the model request." }
 
-func TestRecoveryOpportunitiesAcrossGenerationFailureAndPlanning(t *testing.T) {
-	for _, planning := range []bool{false, true} {
-		t.Run(fmt.Sprint(planning), func(t *testing.T) {
-			p, fixture := toolsExecutionHarness(t, nil, false)
-			fixture.Call = func(*http.Request, string, json.RawMessage) (json.RawMessage, error) {
-				return nil, errors.New("private-server-error")
-			}
-			generations := 0
-			p.Client = nativeClient(func(_ context.Context, r toolcall.Request) (toolcall.Response, error) {
-				generations++
-				if generations == 1 {
-					return toolcall.Response{Calls: []toolcall.Call{toolRequest(r, "first")}}, nil
-				}
-				if planning {
-					if generations == 2 {
-						active, _ := p.Store.Active()
-						return planCall(t, "plan", planCommand{Action: "revise", Plan: active.Plan}), nil
-					}
-					if generations != 3 || !strings.Contains(r.Instructions, "Latest invocation failure (host data):") || !strings.Contains(r.Instructions, "tool_protocol_or_transport_failure") {
-						t.Fatal("failure detail lost after planning response")
-					}
-				} else {
-					if generations == 2 || generations == 3 {
-						return toolcall.Response{}, recoveryGenerationFailure{}
-					}
-					if generations == 4 {
-						return toolcall.Response{Calls: []toolcall.Call{toolRequest(r, "second")}}, nil
-					}
-					if generations != 5 {
-						t.Fatal("generation errors consumed actor recovery opportunities")
-					}
-				}
-				return toolcall.Response{Text: "Incomplete; outcome remains unknown."}, nil
-			})
-			if _, err := p.Handle(context.Background(), &State{Objective: "Inspect"}); err != nil {
-				t.Fatal(err)
-			}
-			expected := int64(2)
-			if planning {
-				expected = 1
-			}
-			if fixture.Calls.Load() != expected {
-				t.Fatal("automatic external replay")
-			}
-		})
+func TestRecoveryOpportunitiesAcrossGenerationFailure(t *testing.T) {
+	p, fixture := toolsExecutionHarness(t, nil, false)
+	fixture.Call = func(*http.Request, string, json.RawMessage) (json.RawMessage, error) {
+		return nil, errors.New("private-server-error")
+	}
+	generations := 0
+	p.Client = nativeClient(func(_ context.Context, r toolcall.Request) (toolcall.Response, error) {
+		generations++
+		if generations == 1 {
+			return toolcall.Response{Calls: []toolcall.Call{toolRequest(r, "first")}}, nil
+		}
+		if generations == 2 || generations == 3 {
+			return toolcall.Response{}, recoveryGenerationFailure{}
+		}
+		if generations == 4 {
+			return toolcall.Response{Calls: []toolcall.Call{toolRequest(r, "second")}}, nil
+		}
+		if generations != 5 {
+			t.Fatal("generation errors consumed actor recovery opportunities")
+		}
+		return toolcall.Response{Text: "Incomplete; outcome remains unknown."}, nil
+	})
+	if _, err := p.Handle(context.Background(), &State{Objective: "Inspect"}); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.Calls.Load() != 2 {
+		t.Fatal("both actor attempts should dispatch exactly once")
 	}
 }

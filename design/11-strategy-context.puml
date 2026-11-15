@@ -1,0 +1,31 @@
+@startuml 11-strategy-context
+title 11 - grodt_manage_strategy_context (internal/loop/strategy_context.go:59)
+autonumber "<b>[11.]"
+skinparam maxMessageSize 240
+
+participant "manageStrategyContext" as MSC
+participant "Store" as S
+
+MSC -> MSC : scan calls for strategyContextTool
+alt not found
+  MSC --> MSC : handled=false
+end
+alt len(calls) != 1 or empty ID
+  MSC --> MSC : error "call alone with nonempty ID"
+end
+MSC -> MSC : decodeStrategyContextArguments\n(strategy_context.go:41)
+MSC -> MSC : operation set|clear;\nsize <= strategyContextLimit()
+MSC -> MSC : build payload {operation, status, result}
+MSC -> S : Admit(llm source, payload) (store.go:220)\n-> 09-admit-modules.puml
+S --> MSC : Event / err
+alt operation = clear
+  MSC --> MSC : "Strategy context cleared."
+else
+  MSC --> MSC : "Strategy context stored."
+end
+note right of S
+  strategy module (wasm) projects the
+  context; stateflow view exposes it to
+  the next model request
+end note
+@enduml

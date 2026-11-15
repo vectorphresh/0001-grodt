@@ -1,0 +1,58 @@
+@startuml 03-plan-gate
+title 03 - Plan boundary, actor-plan capture & host correction (tools.go:120/242, plan_gate.go, host_correction.go)
+autonumber "<b>[03.]"
+skinparam maxMessageSize 240
+
+participant "Handle" as H
+participant "planGate\n(plan_gate.go:24)" as PG
+participant "actorPlanCapture\n(plan_intent.go:244)" as APC
+participant "structured.Generate\n(structured.go:34)" as SG
+participant "Store" as S
+participant "newHostCorrection\n(host_correction.go:35)" as NHC
+participant "planningCorrectionDiagnostics\n(host_correction.go:46)" as PCD
+participant "validateHostCorrection\n(host_correction.go:159)" as VHC
+participant "validatePlanIntent\n(plan_intent.go:136)" as VPI
+
+== plan-boundary gate (no active plan) ==
+H -> PG : planGate(ctx, p, state)
+PG -> S : Active()
+alt no plan
+  PG -> APC : actorPlanCapture(ctx, p, state, messages)
+  APC -> SG : Generate(actorPlanSchema, prompt) -> 10-evaluators.puml
+  SG --> APC : ActorPlanProposal
+  APC -> VPI : validatePlanIntent(ctx, p, nil, proposal)
+  VPI --> APC : intent (or error -> hostCorrection{Intent})
+  APC -> S : Push(task, initial) (tasks.go:37)
+  APC -> S : acceptPlan -> 05-acceptplan.puml
+  PG --> H : true (boundary handled)
+else plan active
+  PG --> H : false
+end
+
+== exclusive host-correction turn (pendingHost != nil) ==
+H -> H : usableCorrectionResponse(resp)
+alt usable
+  H -> PCD : planningCorrectionDiagnostics(ctx, pendingHost, resp)
+  PCD -> S : Active() -> rejected proposal
+  PCD -> S : CheckPlan(candidate) (plan.go:113)
+  PCD -> VPI : validatePlanIntent(source "rejected_proposal")
+  PCD --> H : diagnostics
+  H -> VHC : validateHostCorrection(ctx, pendingHost, resp)
+  VHC --> H : ok / error
+  alt ok
+    H -> H : pendingHost = nil, continue turn
+  else error
+    H -> NHC : newHostCorrection(resp, error, Reconstruct)
+    H -> H : continue (next turn is correction again)
+  end
+else unusable
+  H -> NHC : newHostCorrection(resp, "response unusable", Reconstruct)
+  H -> H : continue
+end
+note right of NHC
+  Correction carries Feedback +
+  FailureFeedback (host_correction.go:151)
+  injected into next request as
+  pendingHost.feedback (tools.go:157)
+end note
+@enduml

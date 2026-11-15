@@ -1,0 +1,33 @@
+@startuml 06-tool-dispatch
+title 06 - External tool batch dispatch (tools.go:450-579)
+autonumber "<b>[06.]"
+skinparam maxMessageSize 240
+
+participant "Handle" as H
+participant "Runtime\n(mcp/client.go)" as RT
+participant "Store" as S
+participant "reconcile\n(reconciliation.go:260)" as RC
+
+H -> RT : Preflight(ctx, calls) (client.go:249)
+RT --> H : PreflightResult{Allowed, Rejected}
+opt rejected calls
+  H -> S : Admit(runtime, rejection) -> 09-admit-modules.puml
+end
+H -> S : QueueAgentWork(ctx, calls) (agent.go:12)
+loop each allowed call
+  H -> S : ActivateAgentWork(ctx, id) (agent.go:47)
+  H -> RT : Invoke(ctx, call) (client.go:280)\n-> 07-mcp-runtime.puml
+  RT --> H : Outcome{Result, Error, Failure}
+  H -> S : RecordAgentOutcome(ctx, id, outcome) (agent.go:64)
+  H -> S : FinishAgentWork(ctx, id) (agent.go:100)
+  H -> S : AdmitAgentOutcome(ctx, id) (agent.go:81)\n-> 09-admit-modules.puml
+  H -> S : RecordCollectedEvidence(ctx, resultID)\n(collected_evidence.go:40)
+end
+opt batch failure recovery
+  H -> H : failure classification ->\nhostCorrection or continue
+end
+opt Reconciler != nil && !PlanningDisabled
+  H -> RC : reconcile(beforeBatch, text, calls)\n-> 08-reconciliation.puml
+end
+H -> H : continue turn loop
+@enduml
