@@ -262,7 +262,7 @@ func TestToolBatchFailsBeforeAnyDispatchOrTask(t *testing.T) {
 	if _, err := p.Handle(context.Background(), &State{Objective: "objective"}); err == nil {
 		t.Fatal("accepted over-budget batch")
 	}
-	if f.Calls.Load() != 31 || len(p.Store.Snapshot().Tasks.Records) != 1 {
+	if f.Calls.Load() != mcp.MaxInvocations-1 || len(p.Store.Snapshot().Tasks.Records) != 1 {
 		t.Fatal("partial batch dispatched or queued")
 	}
 }

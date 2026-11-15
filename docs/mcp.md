@@ -173,7 +173,7 @@ new inference or dispatch.
 | Tools across catalog | 256 |
 | Serialized catalog | 1 MiB |
 | Calls per native batch | 8 |
-| MCP invocations per run | 32 |
+| MCP invocations per run | 1000 |
 | Initialization and discovery per server | 30 seconds |
 | Invocation | 30 seconds |
 | Arguments per call | 64 KiB |

@@ -100,13 +100,13 @@ func TestBatchPreflightAndRunBudget(t *testing.T) {
 	}
 	other := c
 	other.ID = "other"
-	if r.Preflight(context.Background(), []toolcall.Call{c, other}) == nil || f.Calls.Load() != 31 {
+	if r.Preflight(context.Background(), []toolcall.Call{c, other}) == nil || f.Calls.Load() != MaxInvocations-1 {
 		t.Fatal("partial budget accepted")
 	}
 	if _, err := r.Invoke(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Invoke(context.Background(), c); err == nil || f.Calls.Load() != 32 {
+	if _, err := r.Invoke(context.Background(), c); err == nil || f.Calls.Load() != MaxInvocations {
 		t.Fatal("budget exceeded")
 	}
 }

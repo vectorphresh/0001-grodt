@@ -12,7 +12,7 @@ const (
 	MaxBatchCalls     = 8
 	// MaxInvocations bounds a run independently of outer cycles, structured
 	// corrections and the state module HTTP host-execution budget.
-	MaxInvocations   = 32
+	MaxInvocations   = 1000
 	MaxArgumentBytes = 64 << 10
 	MaxResultBytes   = 1 << 20
 	// Wire framing and notification overhead is bounded separately from content.
