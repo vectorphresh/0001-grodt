@@ -48,6 +48,40 @@ type runMetrics struct {
 	PromptTokens     int64
 	CompletionTokens int64
 	TotalTokens      int64
+	timing           requestTimings
+}
+
+const requestSummaryInterval = time.Minute
+
+// Summaries are emitted at request boundaries, so a slow request can delay the
+// next summary. Keep this synchronous with the existing client and diagnostics.
+type requestTimings struct {
+	windowStart time.Time
+	calls       uint64
+	failures    uint64
+	total       time.Duration
+	maximum     time.Duration
+}
+
+func (m *requestTimings) add(elapsed time.Duration, failed bool) {
+	m.calls++
+	m.total += elapsed
+	m.maximum = max(m.maximum, elapsed)
+	if failed {
+		m.failures++
+	}
+}
+
+func (m *requestTimings) flush(s *terminalStatus, now time.Time, final bool) error {
+	if m.calls == 0 || (!final && now.Sub(m.windowStart) < requestSummaryInterval) {
+		return nil
+	}
+	if err := s.log("LLM request timing: %d calls, average %s, maximum %s, %d failed.", m.calls,
+		(m.total / time.Duration(m.calls)).Round(time.Millisecond), m.maximum.Round(time.Millisecond), m.failures); err != nil {
+		return err
+	}
+	*m = requestTimings{windowStart: now}
+	return nil
 }
 
 func (m *runMetrics) add(u *openai.Usage) {
@@ -64,6 +98,9 @@ func reportRun(s *terminalStatus, objective, outcome, rationale string, m runMet
 		if err := s.milestones.drain(); err != nil {
 			return err
 		}
+	}
+	if err := m.timing.flush(s, time.Now(), true); err != nil {
+		return err
 	}
 	if rationale == "" {
 		rationale = "unavailable"
@@ -100,7 +137,7 @@ func (c observedClient) promptOnce(ctx context.Context, prompt string) (openai.T
 			return openai.TextResult{}, err
 		}
 	}
-	if err := c.status.log("Generation request in progress..."); err != nil {
+	if err := c.started("Generation"); err != nil {
 		return openai.TextResult{}, err
 	}
 	c.metrics.Requests++
@@ -125,7 +162,7 @@ func (c observedClient) requestMutationOnce(ctx context.Context, instructions st
 			return openai.JSONResult{}, err
 		}
 	}
-	if err := c.status.log("Evaluation request in progress..."); err != nil {
+	if err := c.started("Evaluation"); err != nil {
 		return openai.JSONResult{}, err
 	}
 	c.metrics.Requests++
@@ -141,12 +178,26 @@ func (c observedClient) requestMutationOnce(ctx context.Context, instructions st
 	}
 	return result, err
 }
-func (c observedClient) finished(operation string, start time.Time, err error) error {
-	outcome := "completed"
-	if err != nil {
-		outcome = "failed"
+func (c observedClient) started(operation string) error {
+	if c.metrics.timing.windowStart.IsZero() {
+		c.metrics.timing.windowStart = time.Now()
 	}
-	return c.status.log("%s request %s after %s.", operation, outcome, time.Since(start).Round(time.Millisecond))
+	if c.metrics.Requests == 0 {
+		return c.status.log("%s request in progress...", operation)
+	}
+	return nil
+}
+
+func (c observedClient) finished(operation string, start time.Time, err error) error {
+	now := time.Now()
+	elapsed := now.Sub(start)
+	c.metrics.timing.add(elapsed, err != nil)
+	if err != nil {
+		if logErr := c.status.log("%s request failed after %s.", operation, elapsed.Round(time.Millisecond)); logErr != nil {
+			return logErr
+		}
+	}
+	return c.metrics.timing.flush(c.status, now, false)
 }
 
 // Structured generation uses the same accounting and redacted progress channel
@@ -155,7 +206,7 @@ func (c observedClient) promptWithSpecificationOnce(ctx context.Context, instruc
 	if err := c.milestones.drain(); err != nil {
 		return openai.JSONResult{}, err
 	}
-	if err := c.status.log("Structured generation request in progress..."); err != nil {
+	if err := c.started("Structured generation"); err != nil {
 		return openai.JSONResult{}, err
 	}
 	c.metrics.Requests++
@@ -180,7 +231,7 @@ func (c observedClient) generateWithToolsOnce(ctx context.Context, request toolc
 	if !ok {
 		return toolcall.Response{}, errors.New("LLM client does not support tools")
 	}
-	if err := c.status.log("Tool-capable generation request in progress..."); err != nil {
+	if err := c.started("Tool-capable generation"); err != nil {
 		return toolcall.Response{}, err
 	}
 	c.metrics.Requests++

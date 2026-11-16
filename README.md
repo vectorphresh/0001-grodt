@@ -80,7 +80,11 @@ validated partition values at startup and saves the snapshot after each run.
 See [general state](docs/general-state.md) and the [module ABI](docs/state-module-abi.md).
 
 Final response goes to stdout. Progress, objective, status, rationale, and metrics
-go to stderr. `--trace` additionally shows the generation prompt and structured
+go to stderr. LLM request timings are summarized about once a minute at request
+completion: call count, average duration, maximum duration, and failure count for
+that interval. Failures are logged immediately; the final report flushes any
+remaining timings. Individual timings remain available in `--trace-dir` artifacts.
+`--trace` additionally shows the generation prompt and structured
 evaluation inputs/schema. It includes user-supplied content; credentials and raw
 SDK envelopes are excluded, and configured-key occurrences are redacted.
 
