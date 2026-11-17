@@ -256,8 +256,11 @@ func (r *Runtime) Preflight(ctx context.Context, calls []toolcall.Call) error {
 	if r.closed {
 		return errors.New("mcp: runtime closed")
 	}
-	if len(calls) == 0 || len(calls) > MaxBatchCalls || len(calls) > MaxInvocations-r.invocations {
-		return errors.New("mcp: invocation budget or batch limit exceeded")
+	if len(calls) > MaxInvocations-r.invocations {
+		return errors.New("mcp: invocation budget exceeded")
+	}
+	if len(calls) == 0 || len(calls) > MaxBatchCalls {
+		return fmt.Errorf("mcp: batch must contain between 1 and %d calls", MaxBatchCalls)
 	}
 	seen := map[string]bool{}
 	for _, c := range calls {

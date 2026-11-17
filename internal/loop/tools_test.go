@@ -357,6 +357,55 @@ func TestToolFailureStopsSiblingsAndRejectsInvalidObservation(t *testing.T) {
 	}
 }
 
+func TestOversizedBatchCorrection(t *testing.T) {
+	for _, correct := range []bool{true, false} {
+		t.Run(fmt.Sprintf("corrected=%v", correct), func(t *testing.T) {
+			p, f := toolsExecutionHarness(t, nil, false)
+			requests := 0
+			p.Client = nativeClient(func(_ context.Context, r toolcall.Request) (toolcall.Response, error) {
+				requests++
+				calls := make([]toolcall.Call, 10)
+				for i := range calls {
+					calls[i] = toolRequest(r, fmt.Sprintf("call_%d", i))
+				}
+				if requests == 1 || !correct {
+					if f.Calls.Load() != 0 || p.Runtime.Invocations() != 0 || len(p.Store.Snapshot().Tasks.Records) != 1 {
+						t.Fatal("rejected batch dispatched or queued work")
+					}
+					return toolcall.Response{Calls: calls}, nil
+				}
+				switch requests {
+				case 2:
+					feedback := r.Messages[len(r.Messages)-1].Text
+					if !strings.Contains(feedback, "none of its calls executed") || !strings.Contains(feedback, "Return at most 8 calls") {
+						t.Fatalf("missing batch correction feedback: %s", feedback)
+					}
+					if f.Calls.Load() != 0 || len(p.Store.Snapshot().Tasks.Records) != 1 {
+						t.Fatal("oversized batch had external or task effects")
+					}
+					return toolcall.Response{Calls: calls[:8]}, nil
+				case 3:
+					if f.Calls.Load() != 8 {
+						t.Fatal("corrected first batch was not dispatched exactly once")
+					}
+					return toolcall.Response{Calls: calls[8:]}, nil
+				default:
+					return toolcall.Response{Text: "finished"}, nil
+				}
+			})
+			s := &State{Objective: "objective"}
+			_, err := p.Handle(context.Background(), s)
+			if correct {
+				if err != nil || requests != 4 || f.Calls.Load() != 10 || p.Runtime.Invocations() != 10 || s.Response != "finished" {
+					t.Fatalf("corrected batch failed: requests=%d dispatched=%d err=%v", requests, f.Calls.Load(), err)
+				}
+			} else if err == nil || requests != 3 || f.Calls.Load() != 0 || p.Runtime.Invocations() != 0 {
+				t.Fatalf("batch correction was not bounded: requests=%d dispatched=%d err=%v", requests, f.Calls.Load(), err)
+			}
+		})
+	}
+}
+
 func TestPreflightCorrectionBudgetResetsAfterDispatch(t *testing.T) {
 	p, _ := toolsExecutionHarness(t, nil, false)
 	requests := 0

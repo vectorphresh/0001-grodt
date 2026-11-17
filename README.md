@@ -60,7 +60,7 @@ state; only accepted operation results reach modules. Modules can request bounde
 HTTP work as sequential child tasks when `--allow-state-http` is explicitly set.
 HTTP is disabled by default. Optional configured MCP tools are available to agent
 generation, with native continuations inside the same outer cycle and a separate
-1000-invocation run budget. MCP observations use the existing State admission path.
+10000-invocation run budget. MCP observations use the existing State admission path.
 Native actors can author bounded task plans with ordered steps, accepted evidence
 references and separately evaluated outcomes. Prior revisions remain in the
 journal. Accepted external activity also triggers a bounded progress reconciliation

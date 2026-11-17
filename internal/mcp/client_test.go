@@ -110,6 +110,26 @@ func TestBatchPreflightAndRunBudget(t *testing.T) {
 		t.Fatal("budget exceeded")
 	}
 }
+
+func TestPreflightSeparatesBatchLimitFromRunBudget(t *testing.T) {
+	f := &testmcp.Server{Tools: json.RawMessage(testmcp.Tools)}
+	r := runtimeFor(t, f)
+	for _, batch := range [][]toolcall.Call{nil, make([]toolcall.Call, MaxBatchCalls+1)} {
+		err := r.Preflight(context.Background(), batch)
+		if err == nil || !strings.Contains(err.Error(), "batch") || strings.Contains(err.Error(), "budget") {
+			t.Fatalf("batch-size violation must allow correction: %v", err)
+		}
+	}
+	r.invocations = MaxInvocations
+	err := r.Preflight(context.Background(), []toolcall.Call{callFor(r)})
+	if err == nil || !strings.Contains(err.Error(), "budget") {
+		t.Fatalf("run budget exhaustion must remain terminal: %v", err)
+	}
+	if f.Calls.Load() != 0 {
+		t.Fatal("preflight dispatched a call")
+	}
+}
+
 func TestResultAcceptance(t *testing.T) {
 	for _, tt := range []struct {
 		name, result, schema string
